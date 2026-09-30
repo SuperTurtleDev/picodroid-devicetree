@@ -32,11 +32,16 @@
 ## PM/framework元数据XML（29）
 `android.software.credentials.prebuilt.xml`, `android.software.preview_sdk.prebuilt.xml`, `android.software.webview.prebuilt.xml`, `android.software.window_magnification.prebuilt.xml`, `apns-full-conf.xml`, `app-lock-exempt.xml`, `approved-ogki-builds.xml`, `enhanced-confirmation.xml`, `framework-audio_effects.xml`, `framework-graphics`, `framework-location`, `framework-sysconfig.xml`, `initial-package-stopped-states.xml`, `kernel-lifetimes.xml`, `package-shareduid-allowlist.xml`, `platform.xml`, `preinstalled-packages-asl-files.xml`, `preinstalled-packages-base-product.xml`, `preinstalled-packages-gsi-system-ext.xml`, `preinstalled-packages-handheld-system-ext.xml`, `preinstalled-packages-media-product.xml`, `preinstalled-packages-media-system-ext.xml`, `preinstalled-packages-media-system.xml`, `preinstalled-packages-platform-generic-system.xml`, `preinstalled-packages-platform-handheld-system.xml`, `preinstalled-packages-platform-telephony-system.xml`, `preinstalled-packages-platform.xml`, `preinstalled-packages-strict-signature.xml`, `privapp-permissions-platform.xml`
 
-## VNDK版本垫片（2）
+## GSI版本探测rc垫片（2）
 `init.gsi.rc`, `init.vndk-nodef.rc`
+（注：这是 GSI 的版本探测/兜底 rc，非 VNDK 快照；删除理由见"结构性调整"第 3 条——
+current vendor 上 nodef 分支必 reboot bootloader。VNDK 快照 v31–v34 已按用户裁定
+"必须全包含"恢复，见第 10 条。）
 
-## AVF虚拟化(GSI继承,picodroid无VM需求)（5）
-`com.android.compos`, `com.android.vndk.v31`, `com.android.vndk.v32`, `com.android.vndk.v33`, `com.android.vndk.v34`
+## AVF虚拟化(1)
+`com.android.compos`
+（AVF = Android Virtualization Framework 的 composition 服务；picodroid 无 VM 需求。
+原误将 VNDK v31–v34 归入本类目，已纠正——那四项是 VNDK 快照且已恢复全包含。）
 
 ## Java框架UI音效数据（1）
 

@@ -201,6 +201,12 @@ android_filesystem_defaults {
         "com.android.runtime",
         // NDK libandroid.so 链接 connectivity_native（tethering apex 内），ASensor/ACamera 依赖
         "com.android.tethering",
+        // VNDK 快照全量恢复（用户裁定"必须全包含"——对齐官方 GSI 的通刷能力，
+        // gsi_release.mk PRODUCT_EXTRA_VNDK_VERSIONS 同款；真机 vendor 任意版本可跑）
+        "com.android.vndk.v31",
+        "com.android.vndk.v32",
+        "com.android.vndk.v33",
+        "com.android.vndk.v34",
         // libstatssocket.so 为 cameraserver/mediaserver(resourcemanagerservice) 的直接链接依赖
         "com.android.os.statsd",
         // aconfigd-mainline：物化全部 apex 的 flag 存储（/metadata/aconfig/maps）。
@@ -210,28 +216,21 @@ android_filesystem_defaults {
         "aconfigd-system",
         "aflags",
         "aoad",
-        "am",
         "android.system.suspend-service",
         "apexd",
         "apexd.mainline_patch_level_2",
-        "appops",
-        "appwidget",
         "atrace",
         "audioserver",
         "blkid",
-        "bmgr",
         "bootstat",
         "bpfloader",
-        "bu",
         "bugreport",
         "bugreportz",
         "cameraserver",
         "casefolding_remover",
         "cgroups.json",
         "cmd",
-        "content",
         "debuggerd",
-        "device_config",
         "dmctl",
         "dmesgd",
         "dpm",
@@ -257,11 +256,9 @@ android_filesystem_defaults {
         "hid",
         "hidservice",
         "idc_data",
-        "ime",
         "init.environ.rc-soong",
         "init.usb.configfs.rc",
         "init.usb.rc",
-        "input",
         "ip", // base_system
         "iptables",
         "kcmdlinectrl",
@@ -270,7 +267,6 @@ android_filesystem_defaults {
         "keylayout_data",
         "llkd", // base_system
         // picodroid: lmkd 为 ActivityManager(Java) 配套；其 libmemevents 静态初始化在本环境 abort 崩溃循环
-        "locksettings", // base_system
         "logcat", // base_system
         "logd", // base_system
         "lpdump", // base_system
@@ -294,13 +290,11 @@ android_filesystem_defaults {
         "ping", // base_system
         "ping6", // base_system
         "pintool", // base_system
-        "pm", // base_system
         "prefetch", //base_system
         "prng_seeder", // base_system
         "public.libraries.android.txt",
         "recovery-persist", // base_system
         "recovery-refresh", // generic_system
-        "requestsync", // media_system
         "resize2fs", // base_system
         "rss_hwm_reset", // base_system
         "run-as", // base_system
@@ -309,30 +303,23 @@ android_filesystem_defaults {
         "sensorservice", // base_system
         "service", // base_system
         "servicemanager", // base_system
-        "settings", // base_system
         "sgdisk", // base_system
-        "sm", // base_system
         "snapuserd", // base_system
         "storaged", // base_system
-        "svc", // base_system
         "system_manifest.xml", // base_system
         "task_profiles.json", // base_system
         "tc", // base_system
-        "telecom", // base_system
         "tombstoned", // base_system
         "traced", // base_system
         "traced_probes", // base_system
-        "tradeinmode", // base_system
         "tune2fs", // base_system
         "uinput", // base_system
         "uncrypt", // base_system
         "update_engine", // generic_system
         "usbd", // base_system
         "virtual_camera", // handheld_system // release_package_virtual_camera
-        "vr", // handheld_system
         "watchdogd", // base_system
         "wifi.rc", // base_system
-        "wm", // base_system
     ] + select(release_flag("RELEASE_NATIVE_OMAPI"), {
         true: [
             "omapi",
@@ -370,7 +357,6 @@ android_filesystem_defaults {
             "sanitizer-status",
             "servicedispatcher",
             "showmap",
-            "snapshotctl",
             "sqlite3",
             "ss",
             "start_with_lockagent",
@@ -419,7 +405,8 @@ android_filesystem_defaults {
                 "build_flag_system", // base_system
                 "charger_res_images", // generic_system
                 "framework_compatibility_matrix.device.xml",
-                "generic_system_fonts", // ok
+                // picodroid: 无头无文本渲染（无 Java/SF/charger UI）——字体 82MB 死重，
+                // generic_system_fonts 下架（台账记录）。
                 "hwservicemanager_compat_symlink_module", // base_system
                 "hyph-data",
                 "init_system", // base_system

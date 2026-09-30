@@ -50,6 +50,10 @@ PRODUCT_PACKAGES += \
     picodroid-userdata \
     fstab.picodroid \
     com.android.tethering \
+    com.android.vndk.v31 \
+    com.android.vndk.v32 \
+    com.android.vndk.v33 \
+    com.android.vndk.v34 \
     com.android.os.statsd \
     com.android.configinfrastructure \
     pmg_daemon \
@@ -57,28 +61,21 @@ PRODUCT_PACKAGES += \
     aconfigd-system \
     aflags \
     aoad \
-    am \
     android.system.suspend-service \
     apexd \
     apexd.mainline_patch_level_2 \
-    appops \
-    appwidget \
     atrace \
     audioserver \
     blkid \
-    bmgr \
     bootstat \
     bpfloader \
-    bu \
     bugreport \
     bugreportz \
     cameraserver \
     casefolding_remover \
     cgroups.json \
     cmd \
-    content \
     debuggerd \
-    device_config \
     dmctl \
     dmesgd \
     dpm \
@@ -103,11 +100,9 @@ PRODUCT_PACKAGES += \
     hid \
     hidservice \
     idc_data \
-    ime \
     init.environ.rc-soong \
     init.usb.configfs.rc \
     init.usb.rc \
-    input \
     ip \
     iptables \
     kcmdlinectrl \
@@ -115,7 +110,6 @@ PRODUCT_PACKAGES += \
     keychars_data \
     keylayout_data \
     llkd \
-    locksettings \
     logcat \
     logd \
     lpdump \
@@ -139,13 +133,11 @@ PRODUCT_PACKAGES += \
     ping \
     ping6 \
     pintool \
-    pm \
     prefetch \
     prng_seeder \
     public.libraries.android.txt \
     recovery-persist \
     recovery-refresh \
-    requestsync \
     resize2fs \
     rss_hwm_reset \
     run-as \
@@ -154,30 +146,23 @@ PRODUCT_PACKAGES += \
     sensorservice \
     service \
     servicemanager \
-    settings \
     sgdisk \
-    sm \
     snapuserd \
     storaged \
-    svc \
     system_manifest.xml \
     task_profiles.json \
     tc \
-    telecom \
     tombstoned \
     traced \
     traced_probes \
-    tradeinmode \
     tune2fs \
     uinput \
     uncrypt \
     update_engine \
     usbd \
     virtual_camera \
-    vr \
     watchdogd \
     wifi.rc \
-    wm \
     com.android.neuralnetworks \
     com.android.uprobestats \
     com.android.npumanager \
@@ -186,7 +171,6 @@ PRODUCT_PACKAGES += \
     build_flag_system \
     charger_res_images \
     framework_compatibility_matrix.device.xml \
-    generic_system_fonts \
     hwservicemanager_compat_symlink_module \
     hyph-data \
     init_system \
@@ -333,7 +317,6 @@ PRODUCT_PACKAGES_DEBUG += \
     sanitizer-status \
     servicedispatcher \
     showmap \
-    snapshotctl \
     sqlite3 \
     ss \
     start_with_lockagent \
