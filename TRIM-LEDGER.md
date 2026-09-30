@@ -424,3 +424,42 @@ top-app cgroup 层级由 init 从 task_profiles.json 正常创建（/dev/cpuctl/
 **不引入**把 picodroid app 迁入 top-app 的机制（stock 中该迁移由 system_server 随前台
 切换执行，picodroid 无此场景）；app 进程落根组。如后续容器驱动需要差异化优先级再议
 （候选：launcher 写 cgroup.procs 或 depends 声明式 prio:: 语法）。
+
+## user vendor 启动验证（2026-09-30，CF user 变体 vendor 侧）
+
+**问题**：真机的 vendor 分区是 user 构建（非 userdebug），picodroid 能否正常启动。
+
+**方法**：本仓构建 `aosp_cf_x86_64_only_phone-trunk_staging-user` 的
+vendor/vendor_dlkm/odm/odm_dlkm 四分区，换入 super（system 仍为 picodroid）；
+主 vbmeta 以 testkey 全量内联分区描述符重建（android17 avbtool 已删
+`--disable-verity/--disable-verification`，链式关校验不可行，只能真描述符真校验）；
+`cvd create --super_image=... --vbmeta_image=... --vbmeta_system_image=vbmeta_system2`。
+
+**结果**：✅ 正常启动（ro.vendor.build.type=user，boot_completed/data.ready=1，
+vendor 侧 boringssl 64 位自检服务正常跑完，SELinux Enforcing），**11/11 app 全 ok**。
+VNDK apex v31–v34 全部激活。nodef 告警 kmsg 因本次启动早期日志量大被环形缓冲挤出，
+垫片机制本身已在此前 userdebug vendor 轮实证（5.2s 出现告警行）。
+
+**坑（按实证序）**：
+1. **产品错配陷阱**：首试误建 `aosp_cf_x86_64_phone`（带 32 位 x86）的 user vendor——
+   该 vendor 带 GSI 兼容垫片 `boringssl_self_test.zygote64_32.rc`（门控
+   `ro.product.cpu.abilist32=*`，picodroid 的 GSI 姿态声明了 abilist32 故触发）但
+   不含 `/vendor/bin/boringssl_self_test32` → exec 失败 →
+   `reboot: boringssl-self-check-failed` 无限重启环（10 分钟后被 cvd 看门狗判死，
+   kernel.log 呈多周期拼接易误读为"内核 0.8s 死"）。宿主包配套产品是
+   `aosp_cf_x86_64_only_phone`（64 位专用），vendor 侧构建必须同名同姿态。
+   真机 vendor 的 rc 与自检二进制成对齐备，不会出现该拆分。
+2. **soong 门控**：picodroid_system 未门控时，构建任何其它产品（如 aosp_cf_*）在
+   soong bootstrap 即炸 "includes non-generic modules"（image 模块只许含跨产品通用
+   模块）。已按 android_gsi 同款门控：picodroid_common.mk
+   `add_soong_config_namespace(picodroid)+soong_config_set_bool(picodroid,building,true)`，
+   Android.bp `enabled: select(soong_config_variable("picodroid","building"),{true:true,default:false})`
+   （select 键必须是裸 bool，字符串键在变量已置位的产品下类型不匹配）。
+3. **宿主网络残留**：多次 create/rm+pkill 后 tap/网桥残留使 ValidateTapDevices 失败；
+   `echo y | cvd reset` 不够时需 `sudo systemctl restart cuttlefish-host-resources`
+   （重建 cvd-ebr/wbr+etap/wtap），再删残留链接（需 sudo）。
+
+**真机仍未知（CF 无法覆盖）**：bootloader 解锁态/真实 AVB 钥匙链（本测试以 testkey
+vbmeta 旁路）、真机 HAL 集合的 VINTF 兼容、真机 sepolicy neverallow 与 su 域 launcher
+的相容性；另若未来出 picodroid **user 变体系统**，launcher 的 `seclabel u:r:su:s0`
+（userdebug_or_eng 包裹）将不存在，需换 init 域或建专用 picodroid_app 域。

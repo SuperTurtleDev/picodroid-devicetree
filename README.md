@@ -102,7 +102,14 @@ adb shell /system/bin/picodroid-launcher  # 拓扑拉起；日志 /userdata/boot
 ```
 
 运维坑（历次实证）：pkill 用 `-x` 精确进程名（`-f` 会杀掉自身）；被 timeout 杀过的
-adb 会话用 `disconnect + kill-server + connect` 复位；构建前 `unset -f grep`。
+adb 会话用 `disconnect + kill-server + connect` 复位；构建前 `unset -f grep`；
+tap/网桥残留致 ValidateTapDevices 失败时 `sudo systemctl restart cuttlefish-host-resources`。
+
+user vendor 验证（2026-09-30 实证可启动，11/11 通过）：构建配套产品的 user 变体
+vendor 侧（宿主包配套为 `aosp_cf_x86_64_only_phone-trunk_staging-user`，
+**勿用带 32 位的 aosp_cf_x86_64_phone**——boringssl 32 位自检垫片缺二进制必重启环），
+换入 super 四分区；主 vbmeta 需 testkey 全量内联分区描述符重建（android17 avbtool
+已无 --disable-verity 旗子）。详见 TRIM-LEDGER.md「user vendor 启动验证」节。
 
 ## 五、裁剪与依赖治理摘要（详见 TRIM-LEDGER.md）
 

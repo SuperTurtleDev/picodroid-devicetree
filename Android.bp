@@ -696,9 +696,17 @@ android_filesystem_defaults {
 }
 
 // ===== picodroid system.img（对应 android_gsi；ext4，GSI 同型）=====
+// 门控：仅 picodroid 产品启用（picodroid_common.mk soong_config_set_bool）。
+// 其它产品（如 aosp_cf_*）构建时 soong 仍解析本文件；android_filesystem 要求
+// 只含跨产品通用模块（vndk 快照/hidl/flags 等随产品配置），不门控会炸 bootstrap
+// （android_gsi 同款做法：enabled select soong_config）。
 android_system_image {
     name: "picodroid_system",
     defaults: ["picodroid_gsi_defaults"],
+    enabled: select(soong_config_variable("picodroid", "building"), {
+        true: true,
+        default: false,
+    }),
 }
 
 // picodroid userdata 契约序列（PLAN §4）：/system/etc/init/ 自动解析，晚于 vendor rc

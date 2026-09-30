@@ -2,6 +2,12 @@
 # 复制自 build/make/target/product/gsi_release.mk 后按台账删减（TRIM-LEDGER.md），
 # 并附 soong 镜像 deps 的 make 侧镜像（file_list_diff 一致性由构建校验）。
 
+# picodroid_system 镜像模块门控（android_gsi 同款）：本产品置位后 bp 侧 enabled。
+# 其它产品（aosp_cf_* 等）构建时 soong 仍解析本仓 Android.bp，不门控会因
+# image 模块"仅含通用模块"约束炸 bootstrap。
+$(call add_soong_config_namespace,picodroid)
+$(call soong_config_set_bool,picodroid,building,true)
+
 PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += \
     system/etc/init/config \
     system/product/% \
