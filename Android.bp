@@ -1,0 +1,733 @@
+// picodroid system image —— 复制自 android17 GSI 镜像定义后按台账删减。
+// 原文来源：
+//   build/make/target/product/generic/Android.bp  (system/system_ext/product_image_defaults)
+//   build/make/target/product/gsi/Android.bp      (android_gsi_defaults / android_gsi)
+// 纪律：除台账（TRIM-LEDGER.md）删除项与改名外全部保持原文；分区姿态与 GSI 完全一致：
+//   - 顶层 /system_ext、/product 为符号链 → /system/ 内部（GSI 单一自足 system 姿态）
+//   - skip_mount.cfg 跳过 product/system_ext/oem 挂载（沿用 GSI 原模块 gsi_skip_mount.cfg）
+//   - /vendor、/odm 等为真实目录挂载点（generic_rootdirs）
+package {
+    default_applicable_licenses: ["Android-Apache-2.0"],
+}
+
+// ===== 姿态变量（原文复制）=====
+generic_rootdirs = [
+    "apex",
+    "bootstrap-apex",
+    "config",
+    "data",
+    "data_mirror",
+    "debug_ramdisk",
+    "dev",
+    "linkerconfig",
+    "metadata",
+    "mnt",
+    "odm",
+    "odm_dlkm",
+    "oem",
+    "postinstall",
+    "proc",
+    "second_stage_resources",
+    "storage",
+    "sys",
+    "system",
+    "system_dlkm",
+    "tmp",
+    "vendor",
+    "vendor_dlkm",
+]
+
+generic_symlinks = [
+    {
+        target: "/system/bin/init",
+        name: "init",
+    },
+    {
+        target: "/system/etc",
+        name: "etc",
+    },
+    {
+        target: "/system/bin",
+        name: "bin",
+    },
+    {
+        target: "/vendor",
+        name: "system/vendor",
+    },
+    {
+        target: "/system_dlkm/lib/modules",
+        name: "system/lib/modules",
+    },
+    {
+        target: "/data/user_de/0/com.android.shell/files/bugreports",
+        name: "bugreports",
+    },
+    {
+        target: "/sys/kernel/debug",
+        name: "d",
+    },
+    {
+        target: "/storage/self/primary",
+        name: "sdcard",
+    },
+    {
+        target: "/product/etc/security/adb_keys",
+        name: "adb_keys",
+    },
+    // For Treble Generic System Image (GSI), system-as-root GSI needs to work on both devices with
+    // and without /odm partition. Those symlinks are for devices without /odm partition. For
+    // devices with /odm partition, mount odm.img under /odm will hide those symlinks.
+    {
+        target: "/vendor/odm/app",
+        name: "odm/app",
+    },
+    {
+        target: "/vendor/odm/apex",
+        name: "odm/apex",
+    },
+    {
+        target: "/vendor/odm/bin",
+        name: "odm/bin",
+    },
+    {
+        target: "/vendor/odm/etc",
+        name: "odm/etc",
+    },
+    {
+        target: "/vendor/odm/firmware",
+        name: "odm/firmware",
+    },
+    {
+        target: "/vendor/odm/framework",
+        name: "odm/framework",
+    },
+    {
+        target: "/vendor/odm/lib",
+        name: "odm/lib",
+    },
+    {
+        target: "/vendor/odm/lib64",
+        name: "odm/lib64",
+    },
+    {
+        target: "/vendor/odm/overlay",
+        name: "odm/overlay",
+    },
+    {
+        target: "/vendor/odm/priv-app",
+        name: "odm/priv-app",
+    },
+    {
+        target: "/vendor/odm/usr",
+        name: "odm/usr",
+    },
+]
+
+gsi_symlinks = [
+    {
+        target: "/system/system_ext",
+        name: "system_ext",
+    },
+    {
+        target: "/system/product",
+        name: "product",
+    },
+    {
+        target: "/odm/odm_dlkm/etc",
+        name: "odm_dlkm/etc",
+    },
+    {
+        target: "/vendor/vendor_dlkm/etc",
+        name: "vendor_dlkm/etc",
+    },
+]
+
+// ===== system 镜像基础（原文复制 system_image_defaults 后按台账删减）=====
+android_filesystem_defaults {
+    name: "picodroid_system_image_defaults",
+    partition_name: "system",
+    base_dir: "system",
+    stem: "system.img",
+    no_full_install: true,
+    dirs: generic_rootdirs + ["userdata"],
+    // 平铺自 soong_config_variables default 分支：symlinks 与 file_contexts 两属性都保留
+    symlinks: generic_symlinks,
+    file_contexts: ":plat_file_contexts",
+    linker_config: {
+        gen_linker_config: true,
+        linker_config_srcs: [":system_linker_config_json_file"],
+    },
+    fsverity: {
+        inputs: select(soong_config_variable("ANDROID", "PRODUCT_FSVERITY_GENERATE_METADATA"), {
+            true: [
+                "etc/boot-image.prof",
+                "etc/classpaths/*.pb",
+                "etc/dirty-image-objects",
+                "etc/preloaded-classes",
+                "framework/*",
+                "framework/*/*", // framework/{arch}
+                "framework/oat/*/*", // framework/oat/{arch}
+            ],
+            default: [],
+        }),
+        libs: select(soong_config_variable("ANDROID", "PRODUCT_FSVERITY_GENERATE_METADATA"), {
+            true: [":framework-res{.export-package.apk}"],
+            default: [],
+        }),
+    },
+    build_logtags: true,
+    gen_aconfig_flags_pb: true,
+    check_vintf: true,
+
+    compile_multilib: "both",
+
+    use_avb: true,
+    avb_private_key: ":generic_system_sign_key",
+    avb_algorithm: "SHA256_RSA4096",
+    avb_hash_algorithm: "sha256",
+    rollback_index_location: 1,
+
+    deps: [
+        // picodroid: 替代已删除的 aosp_mainline_modules（决策见 TRIM-LEDGER.md）
+        "com.android.adbd",
+        "init.picodroid.userdata.rc",
+        "picodroid-userdata",
+        "com.android.i18n",
+        "com.android.tzdata",
+        "com.android.resolv",
+        "com.android.media",
+        "com.android.media.swcodec",
+        "com.android.neuralnetworks",
+        "com.android.runtime",
+        // NDK libandroid.so 链接 connectivity_native（tethering apex 内），ASensor/ACamera 依赖
+        "com.android.tethering",
+        // libstatssocket.so 为 cameraserver/mediaserver(resourcemanagerservice) 的直接链接依赖
+        "com.android.os.statsd",
+        // aconfigd-mainline：物化全部 apex 的 flag 存储（/metadata/aconfig/maps）。
+        // 缺位则各 apex 的 C++ flag 静态初始化全部读不到存储而取默认值。
+        "com.android.configinfrastructure",
+        "abx",
+        "aconfigd-system",
+        "aflags",
+        "aoad",
+        "am",
+        "android.system.suspend-service",
+        "apexd",
+        "apexd.mainline_patch_level_2",
+        "appops",
+        "appwidget",
+        "atrace",
+        "audioserver",
+        "blkid",
+        "bmgr",
+        "bootstat",
+        "bpfloader",
+        "bu",
+        "bugreport",
+        "bugreportz",
+        "cameraserver",
+        "casefolding_remover",
+        "cgroups.json",
+        "cmd",
+        "content",
+        "debuggerd",
+        "device_config",
+        "dmctl",
+        "dmesgd",
+        "dpm",
+        "dump.erofs",
+        "dumpstate",
+        "dumpsys",
+        "e2fsck",
+        "evemu-record", // base_system
+        "etc_hosts",
+        "flags_health_check",
+        "fs_config_dirs_system",
+        "fs_config_files_system",
+        "fsck.erofs",
+        "fsck.f2fs", // for media_system
+        "fsck_msdos",
+        "fstab.picodroid",
+        "gpu_counter_producer",
+        "gpuservice",
+        "group_system",
+        "gsi_tool",
+        "gsid",
+        "heapprofd",
+        "hid",
+        "hidservice",
+        "idc_data",
+        "ime",
+        "init.environ.rc-soong",
+        "init.usb.configfs.rc",
+        "init.usb.rc",
+        "input",
+        "ip", // base_system
+        "iptables",
+        "kcmdlinectrl",
+        "kcmdlinemodprobe",
+        "keychars_data",
+        "keylayout_data",
+        "llkd", // base_system
+        // picodroid: lmkd 为 ActivityManager(Java) 配套；其 libmemevents 静态初始化在本环境 abort 崩溃循环
+        "locksettings", // base_system
+        "logcat", // base_system
+        "logd", // base_system
+        "lpdump", // base_system
+        "lshal", // base_system
+        "make_f2fs", // media_system
+        "media_profiles_V1_0.dtd", // base_system
+        "mediacodec.policy", // base_system
+        "mediacodeclist_generator", // base_system
+        "mediaextractor", // base_system
+        "misctrl", // from base_system
+        "mke2fs", // base_system
+        "mkfs.erofs", // base_system
+        "mm_daemon", // base_system
+        "mm_daemon_setup", // base_system
+        "mtectrl", // base_system
+        "netutils-wrapper-1.0", // full_base
+        "notice_xml_system",
+        "passwd_system", // base_system
+        "pbtombstone", // base_system
+        "perfetto", // base_system
+        "ping", // base_system
+        "ping6", // base_system
+        "pintool", // base_system
+        "pm", // base_system
+        "prefetch", //base_system
+        "prng_seeder", // base_system
+        "public.libraries.android.txt",
+        "recovery-persist", // base_system
+        "recovery-refresh", // generic_system
+        "requestsync", // media_system
+        "resize2fs", // base_system
+        "rss_hwm_reset", // base_system
+        "run-as", // base_system
+        "schedtest", // base_system
+        "secdiscard", // base_system
+        "sensorservice", // base_system
+        "service", // base_system
+        "servicemanager", // base_system
+        "settings", // base_system
+        "sgdisk", // base_system
+        "sm", // base_system
+        "snapuserd", // base_system
+        "storaged", // base_system
+        "svc", // base_system
+        "system_manifest.xml", // base_system
+        "task_profiles.json", // base_system
+        "tc", // base_system
+        "telecom", // base_system
+        "tombstoned", // base_system
+        "traced", // base_system
+        "traced_probes", // base_system
+        "tradeinmode", // base_system
+        "tune2fs", // base_system
+        "uinput", // base_system
+        "uncrypt", // base_system
+        "update_engine", // generic_system
+        "usbd", // base_system
+        "virtual_camera", // handheld_system // release_package_virtual_camera
+        "vr", // handheld_system
+        "watchdogd", // base_system
+        "wifi.rc", // base_system
+        "wm", // base_system
+    ] + select(release_flag("RELEASE_NATIVE_OMAPI"), {
+        true: [
+            "omapi",
+        ],
+        default: [],
+    }) + select(release_flag("RELEASE_PROCESS_MEMORY_GUARDIAN_DAEMON"), {
+        true: [
+            "pmg_daemon", // base_system (RELEASE_PROCESS_MEMORY_GUARDIAN_DAEMON)
+        ],
+        default: [],
+    }) + select(product_variable("debuggable"), {
+        true: [
+            "alloctop",
+            "adevice_fingerprint",
+            "arping",
+            "avbctl",
+            "bootctl",
+            "dmuserd",
+            "evemu-record",
+            "idlcli",
+            "init-debug.rc",
+            "iotop",
+            "iperf3",
+            "iw",
+            "logpersist.start",
+            "logtagd.rc",
+            "lpmodify",
+            "ot-cli-ftd",
+            "ot-ctl",
+            "overlay_remounter",
+            "procrank",
+            "profcollectctl",
+            "profcollectd",
+            "record_binder",
+            "sanitizer-status",
+            "servicedispatcher",
+            "showmap",
+            "snapshotctl",
+            "sqlite3",
+            "ss",
+            "start_with_lockagent",
+            "strace",
+            "su",
+            "tinycap",
+            "tinyhostless",
+            "tinymix",
+            "tinypcminfo",
+            "tinyplay", // host
+            "tracepath",
+            "tracepath6",
+            "traceroute6",
+            "unwind_info",
+            "unwind_reg_info",
+            "unwind_symbols",
+            "update_engine_client",
+        ],
+        default: [],
+    }) + select(release_flag("RELEASE_UPROBESTATS_MODULE"), {
+        true: [],
+        default: [
+            "uprobestats", // base_system internal
+        ],
+    }) + select(release_flag("RELEASE_MEDIAMETRICS_MODULE"), {
+        true: [
+            // keep the framework copy, despite the build flag, for a while post-sdk37
+            // so that we're robust in the face of a mismatch.
+            // we can remove this once we've fully rolled out the module-based version.
+            "mediametrics", // base_system (RELEASE_MEDIAMETRICS_MODULE)
+        ],
+        default: [
+            "mediametrics", // base_system (RELEASE_MEDIAMETRICS_MODULE)
+        ],
+    }) + select(release_flag("RELEASE_DEPRECATE_RUNTIME_APEX"), {
+        true: [
+            "linkerconfig", // base_system
+        ],
+        default: [
+        ],
+    }),
+    multilib: {
+        common: {
+            deps: [
+                "adbd_system_api", // base_system
+                "build_flag_system", // base_system
+                "charger_res_images", // generic_system
+                "framework_compatibility_matrix.device.xml",
+                "generic_system_fonts", // ok
+                "hwservicemanager_compat_symlink_module", // base_system
+                "hyph-data",
+                "init_system", // base_system
+                "llndk.libraries.txt", //ok
+                "perfetto-extras", // system
+                "sanitizer.libraries.txt", // base_system
+                "selinux_policy_system_soong", // ok
+                "shell_and_utilities_system", // ok
+                "system-build.prop",
+                "system_compatibility_matrix.xml", //base_system
+            ] + select(release_flag("RELEASE_ONDEVICE_INTELLIGENCE_MODULE"), {
+                true: [
+                    "com.android.neuralnetworks", // base_system (RELEASE_ONDEVICE_INTELLIGENCE_MODULE)
+                ],
+                default: [
+                ],
+            }) + select(release_flag("RELEASE_UPROBESTATS_MODULE"), {
+                true: [
+                    "com.android.uprobestats", // base_system (RELEASE_UPROBESTATS_MODULE)
+                ],
+                default: [],
+            }) + select(release_flag("RELEASE_NPUMANAGER_MODULE"), {
+                true: [
+                    "com.android.npumanager", // base_system (RELEASE_NPUMANAGER_MODULE)
+                ],
+                default: [],
+            }) + select(release_flag("RELEASE_DEPRECATE_RUNTIME_APEX"), {
+                true: [
+                ],
+                default: [
+                    "com.android.runtime", // base_system
+                ],
+            }),
+        },
+        prefer32: {
+            deps: [
+                "drmserver", // media_system
+                "mediaserver", // base_system
+            ],
+        },
+        lib64: {
+            deps: [
+                "android.system.virtualizationcommon-ndk",
+                "android.system.virtualizationservice-ndk",
+                "libgsi",
+                "servicemanager",
+            ],
+        },
+        both: {
+            deps: [
+                "android.hardware.secure_element@1.0", // generic_system
+                "boringssl_self_test", // base_system
+                "heapprofd_client", // base_system
+                "libETC1", // base_system
+                "libFFTEm", // base_system
+                "libOpenMAXAL", // base_system
+                "libOpenSLES", // base_system
+                "libaaudio", // base_system
+                "libandroid",
+                "libartpalette-system",
+                "libaudio-resampler", // generic-system
+                "libaudiohal", // generic-system
+                "libaudiopolicyengineconfigurable", // generic-system
+                "libbinder",
+                "libbinder_ndk",
+                "libbinder_rpc_unstable",
+                "libcamera2ndk",
+                "libcgrouprc", // llndk library
+                "libclang_rt.asan",
+                "libcompiler_rt",
+                "libcutils", // used by many libs
+                "libdmabufheap", // used by many libs
+                "libdrm", // used by many libs // generic_system
+                "libdrmframework", // base_system
+                "libfdtrack", // base_system
+                "libfilterfw", // base_system
+                "libfilterpack_imageproc", // media_system
+                "libfwdlockengine", // generic_system
+                "libhardware", // base_system
+                "libhardware_legacy", // base_system
+                "libhidltransport", // generic_system
+                "libhwbinder", // generic_system
+                "libinput",
+                "libiprouteutil", // base_system
+                "libjnigraphics", // base_system
+                "libjpeg", // base_system
+                "liblog", // base_system
+                "liblogwrap", // generic_system
+                "liblz4", // generic_system
+                "libmedia", // base_system
+                "libmediandk", // base_system
+                "libminui", // generic_system
+                "libmtp", // base_system
+                "libnetd_client", // base_system
+                "libnetlink", // base_system
+                "libnetutils", // base_system
+                "libneuralnetworks_packageinfo", // base_system
+                "libnl", // generic_system
+                "libpdfium", // base_system
+                "libpolicy-subsystem", // generic_system
+                "libpower", // base_system
+                "libpowermanager", // base_system
+                "libprotobuf-cpp-full", // generic_system
+                "libradio_metadata", // base_system
+                "libsensorservice", // base_system
+                "libsfplugin_ccodec", // base_system
+                "libskia", // base_system
+                "libsonic", // base_system
+                "libsonivox", // base_system
+                "libsoundpool", // base_system
+                "libspeexresampler", // base_system
+                "libsqlite", // base_system
+                "libstagefright", // base_system
+                "libstagefright_foundation", // base_system
+                "libstagefright_omx", // base_system
+                "libstdc++", // base_system
+                "libsysutils", // base_system
+                "libui", // base_system
+                "libusbhost", // base_system
+                "libutils", // base_system
+                "libvendorsupport", // llndk library
+                "libvulkan", // base_system
+                "libwilhelm", // base_system
+                "linker", // base_system
+            ] + select(release_flag("RELEASE_UPROBESTATS_MODULE"), {
+                true: [],
+                default: [
+                    "libuprobestats_client", // base_system internal
+                ],
+            }) + select(release_flag("RELEASE_NATIVE_FRAMEWORK_PROTOTYPE"), {
+                true: [
+                    "libandroid_native_denylist", // base_system (RELEASE_NATIVE_FRAMEWORK_PROTOTYPE)
+                ],
+                default: [],
+            }) + select(release_flag("RELEASE_DEPRECATE_RUNTIME_APEX"), {
+                true: [
+                    "crash_dump", // base_system
+                ],
+                default: [
+                ],
+            }) + select(release_flag("RELEASE_NPUMANAGER_MODULE"), {
+                true: [
+                    "libnpumanager", // base_system (RELEASE_NPUMANAGER_MODULE)
+                ],
+                default: [],
+            }),
+        },
+    },
+    arch: {
+        arm64: {
+            deps: [
+                "libclang_rt.hwasan",
+                "libc_hwasan",
+            ],
+        },
+    },
+    // Do not use a fixed timestamp.
+    // This prevents a full push on the first adb sync.
+    no_use_fixed_timestamp: true,
+}
+
+// ===== system_ext 内容（原文复制 system_ext_image_defaults 后按台账删减）=====
+android_filesystem_defaults {
+    name: "picodroid_system_ext_image_defaults",
+    deps: [
+        ///////////////////////////////////////////
+        // base_system_ext
+        ///////////////////////////////////////////
+        "build_flag_system_ext",
+        "fs_config_dirs_system_ext",
+        "fs_config_files_system_ext",
+        "group_system_ext",
+        "passwd_system_ext",
+        "selinux_policy_system_ext",
+        "system_ext_manifest.xml",
+        "system_ext-build.prop",
+
+        ///////////////////////////////////////////
+        // media_system_ext
+        ///////////////////////////////////////////
+
+        ///////////////////////////////////////////
+        // window_extensions_base
+        ///////////////////////////////////////////
+
+        ///////////////////////////////////////////
+        // base_system
+        ///////////////////////////////////////////
+        "charger",
+    ],
+}
+
+// ===== product 内容（原文复制 product_image_defaults 后按台账删减）=====
+android_filesystem_defaults {
+    name: "picodroid_product_image_defaults",
+    deps: [
+        ///////////////////////////////////////////
+        // media_product
+        ///////////////////////////////////////////
+        ///////////////////////////////////////////
+        // base_product
+        ///////////////////////////////////////////
+
+        // Base modules and settings for the product partition.
+        "build_flag_product",
+        "fs_config_dirs_product",
+        "fs_config_files_product",
+        "group_product",
+        "passwd_product",
+        "product_compatibility_matrix.xml",
+        "product_manifest.xml",
+        "selinux_policy_product",
+        "product-build.prop",
+
+        // AUDIO
+    ],
+}
+
+// ===== GSI 姿态层（原文复制 android_gsi_defaults 后按台账删减）=====
+android_filesystem_defaults {
+    name: "picodroid_gsi_defaults",
+    defaults: [
+        "picodroid_system_image_defaults",
+        "picodroid_system_ext_image_defaults",
+        "picodroid_product_image_defaults",
+    ],
+    symlinks: gsi_symlinks,
+    dirs: ["cache"],
+    deps: [
+        ///////////////////////////////////////////
+        // gsi_system_ext
+        ///////////////////////////////////////////
+
+        // handheld packages
+
+        // Allowlist for handheld packages
+
+        // telephony packages
+
+        ///////////////////////////////////////////
+        // gsi_release
+        ///////////////////////////////////////////
+        "gsi_skip_mount.cfg",
+        // Overlay the GSI specific setting for framework and SystemUI
+
+        ///////////////////////////////////////////
+        // VNDK
+        ///////////////////////////////////////////
+
+        ///////////////////////////////////////////
+        // gsi_product
+        ///////////////////////////////////////////
+
+        ///////////////////////////////////////////
+        // PRODUCT_PACKAGES_SHIPPING_API_LEVEL_33
+        ///////////////////////////////////////////
+
+        ///////////////////////////////////////////
+        // PRODUCT_PACKAGES_SHIPPING_API_LEVEL_34
+        ///////////////////////////////////////////
+        "hwservicemanager",
+        "android.hidl.allocator@1.0-service",
+    ],
+    multilib: {
+        lib64: {
+            deps: [
+                ///////////////////////////////////////////
+                // AVF
+                ///////////////////////////////////////////
+            ],
+        },
+        both: {
+            // PRODUCT_PACKAGES_SHIPPING_API_LEVEL_34
+            deps: ["android.hidl.memory@1.0-impl"],
+        },
+    },
+    type: "ext4",
+}
+
+// ===== picodroid system.img（对应 android_gsi；ext4，GSI 同型）=====
+android_system_image {
+    name: "picodroid_system",
+    defaults: ["picodroid_gsi_defaults"],
+}
+
+// picodroid userdata 契约序列（PLAN §4）：/system/etc/init/ 自动解析，晚于 vendor rc
+prebuilt_etc {
+    name: "init.picodroid.userdata.rc",
+    src: "rootdir/init.picodroid.userdata.rc",
+    sub_dir: "init",
+}
+
+// picodroid fstab（挂载重构终版）：/system/etc/fstab.picodroid，只由我们 rc 的
+// `mount_all /system/etc/fstab.picodroid` 显式消费；名字不等于 fstab.<suffix>，
+// 不会被 GetFstabPath 当默认表。
+prebuilt_etc {
+    name: "fstab.picodroid",
+    src: "rootdir/fstab.picodroid",
+}
+
+sh_binary {
+    name: "picodroid-userdata",
+    src: "rootdir/picodroid-userdata.sh",
+    filename: "picodroid-userdata",
+}
+
+sh_binary {
+    name: "picodroid-launcher",
+    src: "rootdir/picodroid-launcher.sh",
+    filename: "picodroid-launcher",
+}

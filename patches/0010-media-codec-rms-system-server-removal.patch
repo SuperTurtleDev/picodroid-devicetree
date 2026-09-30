@@ -1,0 +1,219 @@
+diff --git a/media/libstagefright/MediaCodec.cpp b/media/libstagefright/MediaCodec.cpp
+index ccd7790..4bb2ad2 100644
+--- a/media/libstagefright/MediaCodec.cpp
++++ b/media/libstagefright/MediaCodec.cpp
+@@ -3193,61 +3193,8 @@ static bool connectFormatShaper() {
+ 
+ 
+         // we also want to know whether this is a handheld device
+-        // start with assumption that the device is handheld.
+-        sIsHandheld = true;
+-        sp<IServiceManager> serviceMgr = defaultServiceManager();
+-        sp<content::pm::IPackageManagerNative> packageMgr;
+-        if (serviceMgr.get() != nullptr) {
+-            sp<IBinder> binder = serviceMgr->waitForService(String16("package_native"));
+-            packageMgr = interface_cast<content::pm::IPackageManagerNative>(binder);
+-        }
+-        // if we didn't get serviceMgr, we'll leave packageMgr as default null
+-        if (packageMgr != nullptr) {
+-
+-            // MUST have these
+-            static const String16 featuresNeeded[] = {
+-                String16("android.hardware.touchscreen")
+-            };
+-            // these must be present to be a handheld
+-            for (::android::String16 required : featuresNeeded) {
+-                bool hasFeature = false;
+-                binder::Status status = packageMgr->hasSystemFeature(required, 0, &hasFeature);
+-                if (!status.isOk()) {
+-                    ALOGE("%s: hasSystemFeature failed: %s",
+-                        __func__, status.exceptionMessage().c_str());
+-                    continue;
+-                }
+-                ALOGV("feature %s says %d", String8(required).c_str(), hasFeature);
+-                if (!hasFeature) {
+-                    ALOGV("... which means we are not handheld");
+-                    sIsHandheld = false;
+-                    break;
+-                }
+-            }
+-
+-            // MUST NOT have these
+-            static const String16 featuresDisallowed[] = {
+-                String16("android.hardware.type.automotive"),
+-                String16("android.hardware.type.television"),
+-                String16("android.hardware.type.watch")
+-            };
+-            // any of these present -- we aren't a handheld
+-            for (::android::String16 forbidden : featuresDisallowed) {
+-                bool hasFeature = false;
+-                binder::Status status = packageMgr->hasSystemFeature(forbidden, 0, &hasFeature);
+-                if (!status.isOk()) {
+-                    ALOGE("%s: hasSystemFeature failed: %s",
+-                        __func__, status.exceptionMessage().c_str());
+-                    continue;
+-                }
+-                ALOGV("feature %s says %d", String8(forbidden).c_str(), hasFeature);
+-                if (hasFeature) {
+-                    ALOGV("... which means we are not handheld");
+-                    sIsHandheld = false;
+-                    break;
+-                }
+-            }
+-        }
++        // picodroid: no system_server — package_native never exists, fix non-handheld (shaping off).
++        sIsHandheld = false;
+ 
+     });
+ 
+diff --git a/services/mediaresourcemanager/UidObserver.cpp b/services/mediaresourcemanager/UidObserver.cpp
+index 4bcd325..39606e0 100644
+--- a/services/mediaresourcemanager/UidObserver.cpp
++++ b/services/mediaresourcemanager/UidObserver.cpp
+@@ -40,16 +40,7 @@ UidObserver::~UidObserver() {
+ }
+ 
+ void UidObserver::start() {
+-    // Use check service to see if the activity service is available
+-    // If not available then register for notifications, instead of blocking
+-    // till the service is ready
+-    sp<IServiceManager> sm = defaultServiceManager();
+-    sp<IBinder> binder = sm->checkService(String16(kActivityServiceName));
+-    if (!binder) {
+-        sm->registerForNotifications(String16(kActivityServiceName), this);
+-    } else {
+-        registerWithActivityManager();
+-    }
++    // picodroid: no system_server — 'activity' never exists, never register the uid observer.
+ }
+ 
+ void UidObserver::stop() {
+@@ -82,20 +73,7 @@ void UidObserver::add(int pid, uid_t uid) {
+ }
+ 
+ void UidObserver::registerWithActivityManager() {
+-    std::scoped_lock lock{mLock};
+-
+-    if (mRegistered) {
+-        return;
+-    }
+-    status_t res = mAm.linkToDeath(this);
+-    // Register for UID gone.
+-    mAm.registerUidObserver(this, ActivityManager::UID_OBSERVER_GONE,
+-                            ActivityManager::PROCESS_STATE_UNKNOWN,
+-                            String16("mediaserver"));
+-    if (res == OK) {
+-        mRegistered = true;
+-        ALOGV("UidObserver: Registered with ActivityManager");
+-    }
++    // picodroid: no system_server — 'activity' never exists, stay unregistered (all-active fallback).
+ }
+ 
+ void UidObserver::onServiceRegistration(const String16& name, const sp<IBinder>&) {
+diff --git a/libs/binder/ProcessInfoService.cpp b/libs/binder/ProcessInfoService.cpp
+index f96dd07..6797730 100644
+--- a/libs/binder/ProcessInfoService.cpp
++++ b/libs/binder/ProcessInfoService.cpp
+@@ -26,95 +26,22 @@ namespace android {
+ using os::IProcessInfoService;
+ 
+ ProcessInfoService::ProcessInfoService() {
+-    updateBinderLocked();
++    // picodroid: no system_server — 'processinfo' never exists, never cache a binder.
+ }
+ 
+ status_t ProcessInfoService::getProcessStatesImpl(size_t length, /*in*/ int32_t* pids,
+         /*out*/ int32_t* states) {
+-    status_t err = NO_ERROR;
+-    sp<IProcessInfoService> pis;
+-    mProcessInfoLock.lock();
+-    pis = mProcessInfoService;
+-    mProcessInfoLock.unlock();
+-
+-    for (int i = 0; i < BINDER_ATTEMPT_LIMIT; i++) {
+-
+-        if (pis != nullptr) {
+-            std::vector<int32_t> pidVector(pids, pids + length);
+-            std::vector<int32_t> statesVector(states, states + length);
+-
+-            auto status = pis->getProcessStatesFromPids(pidVector, &statesVector);
+-            err = status.exceptionCode();
+-            if (err == NO_ERROR) {
+-                memcpy(states, statesVector.data(), length * sizeof(*states));
+-                return NO_ERROR; // success
+-            }
+-            if (IInterface::asBinder(pis)->isBinderAlive()) return err;
+-        }
+-        sleep(1);
+-
+-        mProcessInfoLock.lock();
+-        if (pis == mProcessInfoService) {
+-            updateBinderLocked();
+-        }
+-        pis = mProcessInfoService;
+-        mProcessInfoLock.unlock();
+-    }
+-
+-    ALOGW("%s: Could not retrieve process states from ProcessInfoService after %d retries.",
+-            __FUNCTION__, BINDER_ATTEMPT_LIMIT);
+-
+-    return TIMED_OUT;
++    (void)length; (void)pids; (void)states;
++    // picodroid: no system_server — 'processinfo' never exists, fail fast without retry sleeps.
++    return UNKNOWN_ERROR;
+ }
+ 
+ status_t ProcessInfoService::getProcessStatesScoresImpl(size_t length,
+         /*in*/ int32_t* pids, /*out*/ int32_t* states,
+         /*out*/ int32_t *scores) {
+-    status_t err = NO_ERROR;
+-    sp<IProcessInfoService> pis;
+-    mProcessInfoLock.lock();
+-    pis = mProcessInfoService;
+-    mProcessInfoLock.unlock();
+-
+-    for (int i = 0; i < BINDER_ATTEMPT_LIMIT; i++) {
+-
+-        if (pis != nullptr) {
+-            std::vector<int32_t> pidVector(pids, pids + length);
+-            std::vector<int32_t> statesVector(states, states + length);
+-            std::vector<int32_t> scoresVector(scores, scores + length);
+-            auto status = pis->getProcessStatesAndOomScoresFromPids(pidVector, &statesVector,
+-                                                                    &scoresVector);
+-            err = status.exceptionCode();
+-            if (err == NO_ERROR) {
+-                memcpy(states, statesVector.data(), length * sizeof(*states));
+-                memcpy(scores, scoresVector.data(), length * sizeof(*scores));
+-                return NO_ERROR; // success
+-            }
+-            if (IInterface::asBinder(pis)->isBinderAlive()) return err;
+-        }
+-        sleep(1);
+-
+-        mProcessInfoLock.lock();
+-        if (pis == mProcessInfoService) {
+-            updateBinderLocked();
+-        }
+-        pis = mProcessInfoService;
+-        mProcessInfoLock.unlock();
+-    }
+-
+-    ALOGW("%s: Could not retrieve process states and scores "
+-            "from ProcessInfoService after %d retries.", __FUNCTION__,
+-            BINDER_ATTEMPT_LIMIT);
+-
+-    return TIMED_OUT;
+-}
+-
+-void ProcessInfoService::updateBinderLocked() {
+-    const sp<IServiceManager> sm(defaultServiceManager());
+-    if (sm != nullptr) {
+-        const String16 name("processinfo");
+-        mProcessInfoService = interface_cast<IProcessInfoService>(sm->checkService(name));
+-    }
++    (void)length; (void)pids; (void)states; (void)scores;
++    // picodroid: no system_server — 'processinfo' never exists, fail fast without retry sleeps.
++    return UNKNOWN_ERROR;
+ }
+ 
+ ANDROID_SINGLETON_STATIC_INSTANCE(ProcessInfoService)

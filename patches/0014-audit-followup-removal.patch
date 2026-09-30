@@ -1,0 +1,399 @@
+diff --git a/libs/permission/AppOpsManager.cpp b/libs/permission/AppOpsManager.cpp
+index f695a24..1214090 100644
+--- a/libs/permission/AppOpsManager.cpp
++++ b/libs/permission/AppOpsManager.cpp
+@@ -47,18 +47,9 @@ AppOpsManager::AppOpsManager()
+ 
+ sp<IAppOpsService> AppOpsManager::getService()
+ {
+-    static String16 _appops("appops");
+-
+-    std::lock_guard<Mutex> scoped_lock(mLock);
+-    // picodroid: no system_server — appops never exists; single non-blocking lookup,
+-    // no sleep retry loop. Callers treat a null service as "default allowed".
+-    sp<IAppOpsService> service = mService;
+-    if (service == nullptr || !IInterface::asBinder(service)->isBinderAlive()) {
+-        sp<IBinder> binder = defaultServiceManager()->checkService(_appops);
+-        service = binder != nullptr ? interface_cast<IAppOpsService>(binder) : nullptr;
+-        mService = service;
+-    }
+-    return service;
++    // picodroid: no system_server — appops never exists; no lookup at all.
++    // Callers treat a null service as "default allowed".
++    return nullptr;
+ }
+ 
+ int32_t AppOpsManager::checkOp(int32_t op, int32_t uid, const String16& callingPackage)
+diff --git a/libs/permission/android/permission/PermissionChecker.cpp b/libs/permission/android/permission/PermissionChecker.cpp
+index 66526f9..637f2c7 100644
+--- a/libs/permission/android/permission/PermissionChecker.cpp
++++ b/libs/permission/android/permission/PermissionChecker.cpp
+@@ -19,8 +19,6 @@
+ #include <binder/Binder.h>
+ #include <binder/IServiceManager.h>
+ 
+-#include <utils/SystemClock.h>
+-
+ #include <sys/types.h>
+ #include <private/android_filesystem_config.h>
+ 
+@@ -39,30 +37,9 @@ PermissionChecker::PermissionChecker()
+ 
+ sp<android::permission::IPermissionChecker> PermissionChecker::getService()
+ {
+-    static String16 permission_checker("permission_checker");
+-
+-    std::lock_guard<Mutex> scoped_lock(mLock);
+-    int64_t startTime = 0;
+-    sp<IPermissionChecker> service = mService;
+-    while (service == nullptr || !IInterface::asBinder(service)->isBinderAlive()) {
+-        sp<IBinder> binder = defaultServiceManager()->checkService(permission_checker);
+-        if (binder == nullptr) {
+-            // Wait for the permission checker service to come back...
+-            if (startTime == 0) {
+-                startTime = uptimeMillis();
+-                ALOGW("Waiting for permission checker service");
+-            } else if ((uptimeMillis() - startTime) > 10000) {
+-                ALOGE("Waiting too long for permission checker service, giving up");
+-                service = nullptr;
+-                break;
+-            }
+-            sleep(1);
+-        } else {
+-            mService = interface_cast<IPermissionChecker>(binder);
+-            break;
+-        }
+-    }
+-    return mService;
++    // picodroid: no system_server — permission_checker never exists; no lookup,
++    // no sleep retry loop. Callers treat a null service as "permission granted".
++    return nullptr;
+ }
+ 
+ PermissionChecker::PermissionResult PermissionChecker::checkPermissionForDataDeliveryFromDatasource(
+@@ -126,7 +103,9 @@ PermissionChecker::PermissionResult PermissionChecker::checkPermission(const Str
+         }
+         ALOGE("checkPermission failed: %s", status.exceptionMessage().c_str());
+     }
+-    return PERMISSION_HARD_DENIED;
++    // picodroid: no system_server — permission_checker never exists; all-root
++    // world defaults to granted.
++    return PERMISSION_GRANTED;
+ }
+ 
+ } // namespace android::permission
+diff --git a/services/sensorservice/BatteryService.cpp b/services/sensorservice/BatteryService.cpp
+index 0ea548c..26adf1e 100644
+--- a/services/sensorservice/BatteryService.cpp
++++ b/services/sensorservice/BatteryService.cpp
+@@ -30,67 +30,29 @@
+ namespace android {
+ // ---------------------------------------------------------------------------
+ 
++// picodroid: no system_server — batterystats never exists; all battery accounting is no-op.
++
+ BatteryService::BatteryService()
+     : mBatteryStatService(nullptr), mLastWakeupSensorEventReportedMs(0) {}
+ 
+-bool BatteryService::addSensor(uid_t uid, int handle) {
+-    Mutex::Autolock _l(mActivationsLock);
+-    Info key(uid, handle);
+-    ssize_t index = mActivations.indexOf(key);
+-    if (index < 0) {
+-        index = mActivations.add(key);
+-    }
+-    Info& info(mActivations.editItemAt(index));
+-    info.count++;
+-    return info.count == 1;
++bool BatteryService::addSensor(uid_t /*uid*/, int /*handle*/) {
++    return false;
+ }
+ 
+-bool BatteryService::removeSensor(uid_t uid, int handle) {
+-    Mutex::Autolock _l(mActivationsLock);
+-    ssize_t index = mActivations.indexOf(Info(uid, handle));
+-    if (index < 0) return false;
+-    Info& info(mActivations.editItemAt(index));
+-    info.count--;
+-    return info.count == 0;
++bool BatteryService::removeSensor(uid_t /*uid*/, int /*handle*/) {
++    return false;
+ }
+ 
+ 
+-void BatteryService::enableSensorImpl(uid_t uid, int handle) {
+-    if (checkService()) {
+-        if (addSensor(uid, handle)) {
+-            int64_t identity = IPCThreadState::self()->clearCallingIdentity();
+-            mBatteryStatService->noteStartSensor(uid, handle);
+-            IPCThreadState::self()->restoreCallingIdentity(identity);
+-        }
+-    }
+-}
+-void BatteryService::disableSensorImpl(uid_t uid, int handle) {
+-    if (checkService()) {
+-        if (removeSensor(uid, handle)) {
+-            int64_t identity = IPCThreadState::self()->clearCallingIdentity();
+-            mBatteryStatService->noteStopSensor(uid, handle);
+-            IPCThreadState::self()->restoreCallingIdentity(identity);
+-        }
+-    }
+-}
++void BatteryService::enableSensorImpl(uid_t /*uid*/, int /*handle*/) {}
+ 
+-void BatteryService::noteWakeupSensorEventImpl(int64_t elapsedNanos, uid_t uid, int handle) {
+-    if (checkService()) {
+-        int64_t identity = IPCThreadState::self()->clearCallingIdentity();
+-        mBatteryStatService->noteWakeupSensorEvent(elapsedNanos, uid, handle);
+-        IPCThreadState::self()->restoreCallingIdentity(identity);
+-    }
+-}
++void BatteryService::disableSensorImpl(uid_t /*uid*/, int /*handle*/) {}
++
++void BatteryService::noteWakeupSensorEventImpl(int64_t /*elapsedNanos*/, uid_t /*uid*/,
++                                               int /*handle*/) {}
+ 
+ bool BatteryService::checkService() {
+-    if (mBatteryStatService == nullptr) {
+-        const sp<IServiceManager> sm(defaultServiceManager());
+-        if (sm != nullptr) {
+-            const String16 name("batterystats");
+-            mBatteryStatService = interface_cast<IBatteryStats>(sm->getService(name));
+-        }
+-    }
+-    return mBatteryStatService != nullptr;
++    return false;
+ }
+ 
+ ANDROID_SINGLETON_STATIC_INSTANCE(BatteryService)
+diff --git a/media/libaudiopermission/NativePermissionController.cpp b/media/libaudiopermission/NativePermissionController.cpp
+index 606c7d4..fec054e 100644
+--- a/media/libaudiopermission/NativePermissionController.cpp
++++ b/media/libaudiopermission/NativePermissionController.cpp
+@@ -231,10 +231,9 @@ BinderResult<int32_t> NativePermissionController::getHighestTargetSdkForUid(uid_
+ BinderResult<bool> NativePermissionController::doesUidPermitPlaybackCapture(uid_t uid) const {
+     uid = uid % AID_USER_OFFSET;
+     std::lock_guard l{m_};
++    // picodroid: no system_server — never populated, playback capture permitted by default.
+     if (!is_package_populated_) {
+-        return unexpectedExceptionCode(
+-                Status::EX_ILLEGAL_STATE,
+-                "NPC::doesUidPermitPlaybackCapture: controller never populated by system_server");
++        return BinderResult<bool>{std::in_place_t{}, true};
+     }
+     const auto cursor = package_map_.find(uid);
+     if (cursor != package_map_.end()) {
+diff --git a/media/libmediaplayerservice/ActivityManager.cpp b/media/libmediaplayerservice/ActivityManager.cpp
+index 438d422..c331982 100644
+--- a/media/libmediaplayerservice/ActivityManager.cpp
++++ b/media/libmediaplayerservice/ActivityManager.cpp
+@@ -28,8 +28,10 @@ int openContentProviderFile(const String16& uri)
+ {
+     int fd = -1;
+ 
++    // picodroid: no system_server — activity never exists; single non-blocking
++    // lookup so content:// open fails fast instead of polling for 5 seconds.
+     sp<IServiceManager> sm = defaultServiceManager();
+-    sp<IBinder> binder = sm->getService(String16("activity"));
++    sp<IBinder> binder = sm->checkService(String16("activity"));
+     sp<IActivityManager> am = interface_cast<IActivityManager>(binder);
+     if (am != NULL) {
+         fd = am->openContentUri(uri);
+diff --git a/media/utils/SchedulingPolicyService.cpp b/media/utils/SchedulingPolicyService.cpp
+index 6c4451c..eb5f156 100644
+--- a/media/utils/SchedulingPolicyService.cpp
++++ b/media/utils/SchedulingPolicyService.cpp
+@@ -49,31 +49,11 @@ int requestPriority(pid_t pid, pid_t tid, int32_t prio, bool /*isForApp*/, bool
+     return PERMISSION_DENIED;
+ }
+ 
+-int requestCpusetBoost(bool enable, const sp<IBinder> &client)
++int requestCpusetBoost(bool /*enable*/, const sp<IBinder> &/*client*/)
+ {
+-    int ret;
+-    sMutex.lock();
+-    sp<ISchedulingPolicyService> sps = sSchedulingPolicyService;
+-    sMutex.unlock();
+-    if (sps == 0) {
+-        sp<IBinder> binder = defaultServiceManager()->checkService(_scheduling_policy);
+-        if (binder == 0) {
+-            return DEAD_OBJECT;
+-        }
+-        sps = interface_cast<ISchedulingPolicyService>(binder);
+-        sMutex.lock();
+-        sSchedulingPolicyService = sps;
+-        sMutex.unlock();
+-    }
+-    ret = sps->requestCpusetBoost(enable, client);
+-    if (ret != DEAD_OBJECT) {
+-        return ret;
+-    }
+-    ALOGW("SchedulingPolicyService died");
+-    sMutex.lock();
+-    sSchedulingPolicyService.clear();
+-    sMutex.unlock();
+-    return ret;
++    // picodroid: no system_server — scheduling_policy never exists; no cpuset boost,
++    // fail fast with DEAD_OBJECT without any service lookup.
++    return DEAD_OBJECT;
+ }
+ 
+ int getSpatializerThreadPriority() {
+diff --git a/media/utils/ServiceUtilities.cpp b/media/utils/ServiceUtilities.cpp
+index 8966544..78a5cb0 100644
+--- a/media/utils/ServiceUtilities.cpp
++++ b/media/utils/ServiceUtilities.cpp
+@@ -21,7 +21,6 @@
+ #include <android-base/properties.h>
+ #include <binder/AppOpsManager.h>
+ #include <binder/IPCThreadState.h>
+-#include <binder/IServiceManager.h>
+ #include <binder/PermissionCache.h>
+ #include "mediautils/ServiceUtilities.h"
+ #include <system/audio-hal-enums.h>
+@@ -539,18 +538,9 @@ std::shared_ptr<const UidInfo::Info> UidInfo::getCachedInfo(uid_t uid)
+ 
+     // if we did not find it in our map, look it up
+     if (!info) {
+-        sp<IServiceManager> sm = defaultServiceManager();
++        // picodroid: no system_server — package_native never exists; skip the
++        // getService poll entirely and fall through to getpwuid_r / uid string.
+         sp<content::pm::IPackageManagerNative> package_mgr;
+-        if (sm.get() == nullptr) {
+-            ALOGE("%s: Cannot find service manager", __func__);
+-        } else {
+-            sp<IBinder> binder = sm->getService(String16("package_native"));
+-            if (binder.get() == nullptr) {
+-                ALOGE("%s: Cannot find package_native", __func__);
+-            } else {
+-                package_mgr = interface_cast<content::pm::IPackageManagerNative>(binder);
+-            }
+-        }
+ 
+         // find package name
+         std::string pkg;
+@@ -588,10 +578,8 @@ std::shared_ptr<const UidInfo::Info> UidInfo::getCachedInfo(uid_t uid)
+         // determine how pkg was installed and the versionCode
+         std::string installer;
+         int64_t versionCode = 0;
+-        bool notFound = false;
+         if (pkg.empty()) {
+             pkg = std::to_string(uid); // not found
+-            notFound = true;
+         } else if (strchr(pkg.c_str(), '.') == nullptr) {
+             // not of form 'com.whatever...'; assume internal
+             // so we don't need to look it up in package manager.
+@@ -628,7 +616,10 @@ std::shared_ptr<const UidInfo::Info> UidInfo::getCachedInfo(uid_t uid)
+                 std::move(pkg),
+                 std::move(installer),
+                 versionCode,
+-                now + (notFound ? 0 : INFO_EXPIRATION_NS));
++                // picodroid: no system_server — cache the fallback result (uid
++                // number string for app uids without a passwd entry) for the
++                // full 24h instead of expiring it on every lookup.
++                now + INFO_EXPIRATION_NS);
+         ALOGV("%s: adding uid %d package '%s' expirationNs: %lld",
+                 __func__, uid, info->package.c_str(), (long long)info->expirationNs);
+         mInfoMap[uid] = info;
+diff --git a/services/camera/libcameraservice/CameraService.cpp b/services/camera/libcameraservice/CameraService.cpp
+index 00556c3..aca5ede 100644
+--- a/services/camera/libcameraservice/CameraService.cpp
++++ b/services/camera/libcameraservice/CameraService.cpp
+@@ -91,8 +91,7 @@
+ #include "utils/Utils.h"
+ 
+ namespace {
+-    // picodroid: no system_server — activity/sensor_privacy/appops service names removed
+-    const char* kProcessInfoServiceName = "processinfo";
++    // picodroid: no system_server — activity/sensor_privacy/appops/processinfo service names removed
+     const char* kVirtualDeviceBackCameraId = "0";
+     const char* kVirtualDeviceFrontCameraId = "1";
+     const char* kUnknownPackageName = "<unknown>";
+@@ -2050,56 +2049,14 @@ status_t CameraService::handleEvictionsLocked(const std::string& cameraId, int c
+             return BAD_VALUE;
+         }
+ 
+-        sp<IServiceManager> sm = defaultServiceManager();
+-        sp<IBinder> binder = sm->checkService(String16(kProcessInfoServiceName));
+-        // picodroid: no system_server — processinfo never exists, treat every client as
+-        // top priority instead of failing (or blocking) on the process state query
+-        if (!binder) {
+-            // If processinfo service is not available, use the hardcoded values for the
+-            // process state and priority score: NATIVE_ADJ as the priority score and
+-            // PROCESS_STATE_BOUND_TOP as the state, so clients are treated as visible on top.
+-            clientDescriptor = CameraClientManager::makeClientDescriptor(cameraId,
+-                    sp<BasicClient>{nullptr}, static_cast<int32_t>(state->getCost()),
+-                    state->getConflicting(), resource_policy::NATIVE_ADJ, clientPid,
+-                    ActivityManager::PROCESS_STATE_BOUND_TOP, oomScoreOffset, systemNativeClient,
+-                    sharedMode);
+-        } else {
+-            // Get current active client PIDs
+-            std::vector<int> ownerPids(mActiveClientManager.getAllOwners());
+-            ownerPids.push_back(clientPid);
+-
+-            std::vector<int> priorityScores(ownerPids.size());
+-            std::vector<int> states(ownerPids.size());
+-
+-            // Get priority scores of all active PIDs
+-            status_t err = ProcessInfoService::getProcessStatesScoresFromPids(ownerPids.size(),
+-                    &ownerPids[0], /*out*/&states[0], /*out*/&priorityScores[0]);
+-            if (err != OK) {
+-                ALOGE("%s: Priority score query failed: %d", __FUNCTION__, err);
+-                return err;
+-            }
+-
+-            // Update all active clients' priorities
+-            std::map<int,resource_policy::ClientPriority> pidToPriorityMap;
+-            for (size_t i = 0; i < ownerPids.size() - 1; i++) {
+-                pidToPriorityMap.emplace(ownerPids[i],
+-                        resource_policy::ClientPriority(priorityScores[i], states[i],
+-                        /* isVendorClient won't get copied over*/ false,
+-                        /* oomScoreOffset won't get copied over*/ 0));
+-            }
+-            mActiveClientManager.updatePriorities(pidToPriorityMap);
+-
+-            int32_t actualScore = priorityScores[priorityScores.size() - 1];
+-            int32_t actualState = states[states.size() - 1];
+-
+-            // Make descriptor for incoming client. We store the oomScoreOffset
+-            // since we might need it later on new handleEvictionsLocked and
+-            // ProcessInfoService would not take that into account.
+-            clientDescriptor = CameraClientManager::makeClientDescriptor(cameraId,
+-                    sp<BasicClient>{nullptr}, static_cast<int32_t>(state->getCost()),
+-                    state->getConflicting(), actualScore, clientPid, actualState,
+-                    oomScoreOffset, systemNativeClient, sharedMode);
+-        }
++        // picodroid: no system_server — processinfo never exists, skip the service probe
++        // and treat every client as top priority: NATIVE_ADJ as the priority score and
++        // PROCESS_STATE_BOUND_TOP as the state, so clients are treated as visible on top.
++        clientDescriptor = CameraClientManager::makeClientDescriptor(cameraId,
++                sp<BasicClient>{nullptr}, static_cast<int32_t>(state->getCost()),
++                state->getConflicting(), resource_policy::NATIVE_ADJ, clientPid,
++                ActivityManager::PROCESS_STATE_BOUND_TOP, oomScoreOffset, systemNativeClient,
++                sharedMode);
+ 
+         resource_policy::ClientPriority clientPriority = clientDescriptor->getPriority();
+ 
+diff --git a/media/libstagefright/MediaCodecList.cpp b/media/libstagefright/MediaCodecList.cpp
+index 9bdfdf1..5583751 100644
+--- a/media/libstagefright/MediaCodecList.cpp
++++ b/media/libstagefright/MediaCodecList.cpp
+@@ -140,7 +140,7 @@ public:
+             if (getuid() == AID_MEDIA) {
+                 ALOGI("In mediaserver, fetching MediaCodecList from generator service.");
+                 sp<IServiceManager> sm = defaultServiceManager();
+-                sp<IBinder> binder = sm->waitForService(String16("media.codeclist.generator"));
++                sp<IBinder> binder = sm->checkService(String16("media.codeclist.generator"));
+                 if (binder != nullptr) {
+                     sp<media::IMediaCodecListGenerator> generator =
+                             interface_cast<media::IMediaCodecListGenerator>(binder);
+@@ -155,7 +155,8 @@ public:
+                                 status.toString8().c_str());
+                     }
+                 } else {
+-                    ALOGE("Failed to get media.codeclist.generator service.");
++                    // picodroid: no system_server — codeclist generator not running; fall back to local build
++                    ALOGW("media.codeclist.generator not available, falling back to local MediaCodecList build");
+                 }
+             }
+             if (mLocalInstance == nullptr) {

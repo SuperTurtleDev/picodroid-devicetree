@@ -1,0 +1,9 @@
+diff --git a/tools/filelistdiff/allowlist b/tools/filelistdiff/allowlist
+index 7a27174..13bed8c 100644
+--- a/tools/filelistdiff/allowlist
++++ b/tools/filelistdiff/allowlist
+@@ -32,3 +32,4 @@ vendor
+ lib64/bootstrap/libclang_rt.hwasan-aarch64-android.so
+ lib64/libclang_rt.hwasan-aarch64-android.so
+ lib64/hwasan/libc.so
++lib64/bootstrap/hwasan/libc.so

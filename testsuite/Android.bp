@@ -1,0 +1,140 @@
+// picodroid testsuite —— NDK 功能级测试（音频/相机/传感器/媒体/蓝牙 HAL/触摸/挂载契约）。
+// 运行形态：二进制（M1 调试期 adb 直跑）+ picodroid app 契约包装（apps/，M4 launcher 拉起）。
+// NDK 界：sdk_version current；libc++ 动态链接（c++_static 与平台共享库符号插入冲突，
+// 实测致 libultrahdr/libmemevents 静态初始化堆损坏 abort）。
+package {
+    default_applicable_licenses: ["Android-Apache-2.0"],
+}
+
+cc_defaults {
+    name: "pdtest_defaults",
+    sdk_version: "current",
+    stl: "c++_shared",
+    shared_libs: ["liblog"],
+    // root 直调（PLAN §1：放开 app-uid 限制属 M5 平台补丁；当前先以 root shell 运行）
+    // 无 init_rc：由 start.sh / adb 显式运行
+}
+
+cc_binary {
+    name: "pdtest_camera",
+    defaults: ["pdtest_defaults"],
+    srcs: ["src/pdtest_camera.cpp"],
+    // libbinder_ndk：起 libbinder 线程池接 cameraserver→客户端回调（裸 NDK 进程不自动起）
+    shared_libs: ["libcamera2ndk", "libmediandk", "libandroid", "libbinder_ndk"],
+}
+
+cc_binary {
+    name: "pdtest_audio",
+    defaults: ["pdtest_defaults"],
+    srcs: ["src/pdtest_audio.cpp"],
+    shared_libs: ["libaaudio", "libOpenSLES"],
+}
+
+cc_binary {
+    name: "pdtest_sensor",
+    defaults: ["pdtest_defaults"],
+    srcs: ["src/pdtest_sensor.cpp"],
+    shared_libs: ["libandroid"],
+}
+
+// 内置 H264 测试码流 → C 数组头（pdtest_media 解码闭环用）
+genrule {
+    name: "pdtest_bbb_stream_h",
+    srcs: ["src/bbb_avc_176x144_300kbps_60fps.h264"],
+    out: ["bbb_stream.h"],
+    cmd: "python3 -c " +
+        "\"import sys;d=open(sys.argv[1],'rb').read();f=open(sys.argv[2],'w');" +
+        "f.write('static const unsigned char kStream[]={'+','.join(str(b) for b in d)+'};\\\\n" +
+        "static const size_t kStreamLen=sizeof(kStream);\\\\n')\" $(in) $(out)",
+}
+
+cc_binary {
+    name: "pdtest_media",
+    defaults: ["pdtest_defaults"],
+    srcs: ["src/pdtest_media.cpp"],
+    // libbinder_ndk：起 libbinder 线程池接 C2 服务→客户端 buffer 回调（否则 dequeue* 死等）
+    shared_libs: ["libmediandk", "libbinder_ndk"],
+    generated_headers: ["pdtest_bbb_stream_h"],
+}
+
+cc_binary {
+    name: "pdtest_bluetooth",
+    defaults: ["pdtest_defaults"],
+    srcs: ["src/pdtest_bluetooth.cpp"],
+    shared_libs: ["libbinder_ndk"],
+}
+
+cc_binary {
+    name: "pdtest_mount",
+    defaults: ["pdtest_defaults"],
+    srcs: ["src/pdtest_mount.cpp"],
+}
+
+// nfc/drm：NDK 无 NFC 面→AIDL HAL 实连；DRM 用 NdkMediaDrm 真 clearkey 会话
+cc_binary {
+    name: "pdtest_nfc",
+    defaults: ["pdtest_defaults"],
+    srcs: ["src/pdtest_nfc.cpp"],
+    shared_libs: ["libbinder_ndk"],
+}
+
+cc_binary {
+    name: "pdtest_drm",
+    defaults: ["pdtest_defaults"],
+    srcs: ["src/pdtest_drm.cpp"],
+    shared_libs: ["libmediandk"],
+}
+
+// 汇总入口：串行全跑，聚合 PASS/FAIL（M1 调试期 adb 直跑；M4 后由 launcher 拉起各 app）
+sh_binary {
+    name: "pdtest_all",
+    src: "pdtest_all.sh",
+    filename: "pdtest_all",
+}
+
+// 原生 shell 面测试（无 system_server 镜像：idlcli/dumpsys 直打 servicemanager 注册的
+// vendor HAL binder 面；netd 已删后的 DNS 状态验证——域名缺席算 DEGRADED 不算 FAIL）
+sh_binary {
+    name: "pdtest_hal",
+    src: "pdtest_hal.sh",
+    filename: "pdtest_hal",
+}
+
+sh_binary {
+    name: "pdtest_dns",
+    src: "pdtest_dns.sh",
+    filename: "pdtest_dns",
+}
+
+cc_binary {
+    name: "pdtest_touch",
+    defaults: ["pdtest_defaults"],
+    srcs: ["src/pdtest_touch.cpp"],
+    shared_libs: ["libbinder_ndk"],
+}
+
+// 编码闭环回归：防 package_native waitForService 死等（首输出前永久挂死）；
+// alarm(10) 兜底，判据=拿到首个输出 buffer（codec config 计入）
+cc_binary {
+    name: "pdtest_encode",
+    defaults: ["pdtest_defaults"],
+    srcs: ["src/pdtest_encode.cpp"],
+    // libbinder_ndk：同 pdtest_media（回调可达性）
+    shared_libs: ["libmediandk", "libbinder_ndk"],
+}
+
+// AAudio 低延迟路径回归：防 requestPriority(SchedulingPolicy) 死循环挂死
+cc_binary {
+    name: "pdtest_audio_ll",
+    defaults: ["pdtest_defaults"],
+    srcs: ["src/pdtest_audio_ll.cpp"],
+    shared_libs: ["libaaudio"],
+}
+
+// 非 root（app uid 10086）音频权限恒真：root 下 fork 降权跑录音+播放
+cc_binary {
+    name: "pdtest_audio_appuid",
+    defaults: ["pdtest_defaults"],
+    srcs: ["src/pdtest_audio_appuid.cpp"],
+    shared_libs: ["libaaudio"],
+}

@@ -1,0 +1,38 @@
+# picodroid userdata fstab —— 挂载重构终版（2026-09-30 用户多轮裁定定稿）。
+#
+# 形态：单条目、标准 /data 形态。挂载走系统原生 fs_mgr；DSU 态换源走系统原生
+# TransformFstabForDsu（对 mount_all 显式路径同样生效，android17 源码核实：
+# libfstab/fstab.cpp:676-690 ReadFstabFromFile 在读任意指定 fstab 后、见
+# /metadata/gsi/dsu/booted 即调 TransformFstabForDsu；:559-571 对 /data 条目把
+# blk_device 改写为 userdata_gsi 并强置 logical+formattable）。
+#
+# 文件名不得等于 fstab.<suffix>（fstab.cpp:468-481 GetFstabPath 按
+# fstab.<fstab_suffix>/fstab.<hardware>/fstab.<hardware.platform> 搜默认表）：
+# fstab.picodroid 不会被任何一方当作默认表，只由我们 rc 里的
+# `mount_all /system/etc/fstab.picodroid` 显式消费，无双重解析。
+#
+# 旗标依据（逐项核实）：
+#   wait          —— fs_mgr.cpp WaitForFile 20s，等 by-name 符号链接就绪。
+#   check         —— e2fsdroid 侧 e2fsck（镜像内有 e2fsck）。
+#   quota         —— tune2fs 启用 ext4 quota（镜像内有 tune2fs）。
+#   formattable   —— 空白盘（首 4096 全 0/全 ff，libcutils partition_wiped）经
+#                    fs_mgr_do_format 的 mke2fs+e2fsdroid 标准重建（fs_mgr.cpp:1707-1747；
+#                    e2fsdroid 经 init_second_stage 的 required 进镜像，init/Android.bp:339）。
+#   logical       —— DSU 态 TransformFstabForDsu 把 blk_device 换成裸名 userdata_gsi 后，
+#                    由 fs_mgr_update_logical_partition 按名解析出
+#                    /dev/block/mapper/userdata_gsi（fs_mgr.cpp:1192-1208）。
+#                    非 DSU 态 blk_device 为路径形态（/ 开头）时该函数 :1193-1197 直接
+#                    返回 true（已是路径、无需解析），logical 为惰性旗标：
+#                    CF（by-name 物理分区）与真机（by-name 路径直接挂）均不因此失败。
+#   fsverity      —— 按 W 报告补：fs_mgr.cpp:849 的 ext4 tune 路径只看旗标、
+#                    无挂载点判据，显式置位保持与真机标准行为一致。
+# 明确不加（陷阱记录）：
+#   slotselect    —— slotselect.cpp:64-67：条目带 slotselect 而 slot_suffix 为空时
+#                    fs_mgr_update_for_slotselect 整表返回 false，fstab 读取整体失败。
+#                    picodroid 不承诺 A/B 槽位（真机实测无后缀、CF 恒 _a 但条目名不带槽）。
+#   latemount / first_stage_mount —— default 模式单次挂载：本表只在 early-fs 被
+#                    无 --early/--late 的 mount_all 消费一次（MOUNT_MODE_DEFAULT 下
+#                    latemount 条目也照挂，反而引入 late 期二次解析面）。
+#   零加密标志    —— 无 vold，fs_mgr 侧 encryptable 全空 → FS_MGR_MNTALL_DEV_NOT_
+#                    ENCRYPTABLE（crypto 状态保持我们 early-init 固化的 unsupported）。
+/dev/block/by-name/userdata /data ext4 noatime,nodev,nosuid wait,check,quota,formattable,logical,fsverity

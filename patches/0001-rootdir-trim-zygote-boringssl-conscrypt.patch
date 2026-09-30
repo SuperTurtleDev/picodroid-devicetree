@@ -1,0 +1,372 @@
+diff --git a/rootdir/Android.bp b/rootdir/Android.bp
+index 27c4506..e187e74 100644
+--- a/rootdir/Android.bp
++++ b/rootdir/Android.bp
+@@ -38,9 +38,6 @@ prebuilt_etc {
+     src: "init.rc",
+     sub_dir: "init/hw",
+     required: [
+-        "platform-bootclasspath",
+-        "init.boringssl.zygote64.rc",
+-        "init.boringssl.zygote64_32.rc",
+         "init-perfetto.rc",
+     ],
+ }
+diff --git a/rootdir/init.rc b/rootdir/init.rc
+index 5e26d12..1d672dc 100644
+--- a/rootdir/init.rc
++++ b/rootdir/init.rc
+@@ -9,7 +9,6 @@ import /system/etc/init/hw/init.usb.rc
+ import /init.${ro.hardware}.rc
+ import /vendor/etc/init/hw/init.${ro.hardware}.rc
+ import /system/etc/init/hw/init.usb.configfs.rc
+-import /system/etc/init/hw/init.${ro.zygote}.rc
+ 
+ # Cgroups are mounted right before early-init using list from /etc/cgroups.json
+ on early-init
+@@ -474,7 +473,6 @@ on init
+     mkdir /mnt/vm/early 0770 system system
+ 
+ # Run boringssl self test for each ABI.  Any failures trigger reboot to firmware.
+-import /system/etc/init/hw/init.boringssl.${ro.zygote}.rc
+ 
+ service boringssl_self_test32 /system/bin/boringssl_self_test32
+     reboot_on_failure reboot,boringssl-self-check-failed
+@@ -490,19 +488,7 @@ service boringssl_self_test64 /system/bin/boringssl_self_test64
+     capabilities
+     user nobody
+ 
+-service boringssl_self_test_apex32 /apex/com.android.conscrypt/bin/boringssl_self_test32
+-    reboot_on_failure reboot,boringssl-self-check-failed
+-    stdio_to_kmsg
+-    # Explicitly specify that boringssl_self_test_apex32 doesn't require any capabilities
+-    capabilities
+-    user nobody
+ 
+-service boringssl_self_test_apex64 /apex/com.android.conscrypt/bin/boringssl_self_test64
+-    reboot_on_failure reboot,boringssl-self-check-failed
+-    stdio_to_kmsg
+-    # Explicitly specify that boringssl_self_test_apex64 doesn't require any capabilities
+-    capabilities
+-    user nobody
+ 
+ # Healthd can trigger a full boot from charger mode by signaling this
+ # property when the power button is held.
+@@ -553,7 +539,6 @@ on early-fs
+     start vold
+ 
+ on post-fs
+-    exec - system system -- /system/bin/vdc checkpoint markBootAttempt
+ 
+     # Once everything is setup, no need to modify /.
+     # The bind+remount combination allows this to work in containers.
+@@ -663,7 +648,6 @@ on property:ro.product.cpu.abilist64=* && property:bootreceiver.enable=1
+ on post-fs-data
+ 
+     # Start checkpoint before we touch data
+-    exec - system system -- /system/bin/vdc checkpoint prepareCheckpoint
+ 
+     # We chown/chmod /data again so because mount is run as root + defaults
+     chown system system /data
+@@ -672,22 +656,24 @@ on post-fs-data
+     restorecon /data
+ 
+     # Make sure we have the device encryption key.
+-    installkey /data
++    # picodroid: FBE/vold removed (PLAN section 3); installkey invokes vdc and
++    # reboots into recovery when vold is absent.
++    # installkey /data
+ 
+     # Start bootcharting as soon as possible after the data partition is
+     # mounted to collect more data.
+-    mkdir /data/bootchart 0755 shell shell encryption=Require
++    mkdir /data/bootchart 0755 shell shell
+     bootchart start
+ 
+     # Avoid predictable entropy pool. Carry over entropy from previous boot.
+     copy /data/system/entropy.dat /dev/urandom
+ 
+-    mkdir /data/vendor 0771 root root encryption=Require
++    mkdir /data/vendor 0771 root root
+     mkdir /data/vendor/hardware 0771 root root
+ 
+     # Start tombstoned early to be able to store tombstones.
+-    mkdir /data/anr 0775 system system encryption=Require
+-    mkdir /data/tombstones 0775 system system encryption=Require
++    mkdir /data/anr 0775 system system
++    mkdir /data/tombstones 0775 system system
+     mkdir /data/vendor/tombstones 0771 root root
+     mkdir /data/vendor/tombstones/wifi 0771 wifi wifi
+     start tombstoned
+@@ -697,7 +683,7 @@ on post-fs-data
+ 
+     # set up keystore directory structure first so that we can end early boot
+     # and start apexd
+-    mkdir /data/misc 01771 system misc encryption=Require
++    mkdir /data/misc 01771 system misc
+     mkdir /data/misc/keystore 0700 keystore keystore
+     # work around b/183668221
+     restorecon /data/misc /data/misc/keystore
+@@ -712,13 +698,12 @@ on post-fs-data
+     # we can tell keystore to stop allowing use of early-boot keys,
+     # and access its database for the first time to support creation and
+     # use of MAX_BOOT_LEVEL keys.
+-    exec - system system -- /system/bin/vdc keymaster earlyBootEnded
+ 
+     # Multi-installed APEXes are selected using persist props.
+     # Load persist properties and override properties (if enabled) from /data,
+     # before starting apexd.
+     # /data/property should be created before `load_persist_props`
+-    mkdir /data/property 0700 root root encryption=Require
++    mkdir /data/property 0700 root root
+     load_persist_props
+ 
+     start logd-reinit
+@@ -740,13 +725,13 @@ on post-fs-data
+     # /data/apex/decompressed and /data/apex/ota_reserved override this setting;
+     # they are encrypted so that files in them can be hard-linked into
+     # /data/rollback which is encrypted.
+-    mkdir /data/apex 0755 root system encryption=None
++    mkdir /data/apex 0755 root system
+     mkdir /data/apex/active 0755 root system
+     mkdir /data/apex/backup 0700 root system
+-    mkdir /data/apex/decompressed 0755 root system encryption=Require
++    mkdir /data/apex/decompressed 0755 root system
+     mkdir /data/apex/images 0755 root system
+-    mkdir /data/app-staging 0751 system system encryption=DeleteIfNecessary
+-    mkdir /data/apex/ota_reserved 0700 root system encryption=Require
++    mkdir /data/app-staging 0751 system system
++    mkdir /data/apex/ota_reserved 0700 root system
+     setprop apexd.status ""
+     restart apexd
+ 
+@@ -798,7 +783,7 @@ on post-fs-data
+     mkdir /data/misc/user 0771 root root
+     # give system access to wpa_supplicant.conf for backup and restore
+     chmod 0660 /data/misc/wifi/wpa_supplicant.conf
+-    mkdir /data/local 0751 root root encryption=Require
++    mkdir /data/local 0751 root root
+     mkdir /data/misc/media 0700 media media
+     mkdir /data/misc/audioserver 0700 audioserver audioserver
+     mkdir /data/misc/cameraserver 0700 cameraserver cameraserver
+@@ -846,23 +831,23 @@ on post-fs-data
+ 
+     # /data/preloads uses encryption=None because it only contains preloaded
+     # files that are public information, similar to the system image.
+-    mkdir /data/preloads 0775 system system encryption=None
++    mkdir /data/preloads 0775 system system
+ 
+     # For security reasons, /data/local/tmp should always be empty.
+     # Do not place files or directories in /data/local/tmp
+     mkdir /data/local/tmp 0771 shell shell
+     mkdir /data/local/traces 0777 shell shell
+-    mkdir /data/app-private 0771 system system encryption=Require
+-    mkdir /data/app-ephemeral 0771 system system encryption=Require
+-    mkdir /data/app-asec 0700 root root encryption=Require
+-    mkdir /data/app-lib 0771 system system encryption=Require
+-    mkdir /data/app 0771 system system encryption=Require
++    mkdir /data/app-private 0771 system system
++    mkdir /data/app-ephemeral 0771 system system
++    mkdir /data/app-asec 0700 root root
++    mkdir /data/app-lib 0771 system system
++    mkdir /data/app 0771 system system
+ 
+     # Create directory for app metadata files
+-    mkdir /data/app-metadata 0700 system system encryption=Require
++    mkdir /data/app-metadata 0700 system system
+ 
+     # create directory for updated font files.
+-    mkdir /data/fonts/ 0771 root root encryption=Require
++    mkdir /data/fonts/ 0771 root root
+     mkdir /data/fonts/files 0771 system system
+     mkdir /data/fonts/config 0770 system system
+ 
+@@ -878,16 +863,16 @@ on post-fs-data
+     mkdir /data/local/tests/vendor 0701 shell shell
+ 
+     # create dalvik-cache, so as to enforce our permissions
+-    mkdir /data/dalvik-cache 0771 root root encryption=Require
++    mkdir /data/dalvik-cache 0771 root root
+     # create the A/B OTA directory, so as to enforce our permissions
+-    mkdir /data/ota 0771 root root encryption=Require
++    mkdir /data/ota 0771 root root
+ 
+     # create the OTA package directory. It will be accessed by GmsCore (cache
+     # group), update_engine
+-    mkdir /data/ota_package 0770 system cache encryption=Require
++    mkdir /data/ota_package 0770 system cache
+ 
+     # create resource-cache and double-check the perms
+-    mkdir /data/resource-cache 0771 system system encryption=Require
++    mkdir /data/resource-cache 0771 system system
+     chown system system /data/resource-cache
+     chmod 0771 /data/resource-cache
+ 
+@@ -895,26 +880,26 @@ on post-fs-data
+     # filesystems expect this directory to exist; it's where the fsck tool puts
+     # any recovered files that weren't present in any directory.  It must be
+     # unencrypted, as fsck must be able to write to it.
+-    mkdir /data/lost+found 0770 root root encryption=None
++    mkdir /data/lost+found 0770 root root
+ 
+     # create directory for DRM plug-ins - give drm the read/write access to
+     # the following directory.
+-    mkdir /data/drm 0770 drm drm encryption=Require
++    mkdir /data/drm 0770 drm drm
+ 
+     # create directory for MediaDrm plug-ins - give drm the read/write access to
+     # the following directory.
+-    mkdir /data/mediadrm 0770 mediadrm mediadrm encryption=Require
++    mkdir /data/mediadrm 0770 mediadrm mediadrm
+ 
+     # NFC: create data/nfc for nv storage
+-    mkdir /data/nfc 0770 nfc nfc encryption=Require
++    mkdir /data/nfc 0770 nfc nfc
+     mkdir /data/nfc/param 0770 nfc nfc
+ 
+     # Create all remaining /data root dirs so that they are made through init
+     # and get proper encryption policy installed
+-    mkdir /data/backup 0700 system system encryption=Require
+-    mkdir /data/ss 0700 system system encryption=Require
++    mkdir /data/backup 0700 system system
++    mkdir /data/ss 0700 system system
+ 
+-    mkdir /data/system 0775 system system encryption=Require
++    mkdir /data/system 0775 system system
+     mkdir /data/system/aiseal 0700 system system
+     mkdir /data/system/environ 0700 system system
+     # b/183861600 attempt to fix selinux label before running derive_classpath service
+@@ -940,19 +925,19 @@ on post-fs-data
+     # as root with CAP_DAC_OVERRIDE.  This is also fully enforced via the
+     # SELinux policy.  But we also set the DAC file modes accordingly, to try to
+     # minimize differences in behavior if SELinux is set to permissive mode.
+-    mkdir /data/media 0550 media_rw media_rw encryption=None
+-    mkdir /data/misc_ce 0551 system misc encryption=None
+-    mkdir /data/misc_de 0551 system misc encryption=None
+-    mkdir /data/system_ce 0550 system system encryption=None
+-    mkdir /data/system_de 0550 system system encryption=None
+-    mkdir /data/user 0511 system system encryption=None
+-    mkdir /data/user_de 0511 system system encryption=None
+-    mkdir /data/vendor_ce 0551 root root encryption=None
+-    mkdir /data/vendor_de 0551 root root encryption=None
++    mkdir /data/media 0550 media_rw media_rw
++    mkdir /data/misc_ce 0551 system misc
++    mkdir /data/misc_de 0551 system misc
++    mkdir /data/system_ce 0550 system system
++    mkdir /data/system_de 0550 system system
++    mkdir /data/user 0511 system system
++    mkdir /data/user_de 0511 system system
++    mkdir /data/vendor_ce 0551 root root
++    mkdir /data/vendor_de 0551 root root
+ 
+     # Similar to the top-level CE and DE directories, /data/storage_area must
+     # itself be unencrypted, since it contains encrypted directories.
+-    mkdir /data/storage_area 0551 root root encryption=None
++    mkdir /data/storage_area 0551 root root
+ 
+     # Set the casefold flag on /data/media.  For upgrades, a restorecon can be
+     # needed first to relabel the directory from media_rw_data_file.
+@@ -998,18 +983,18 @@ on post-fs-data
+     mkdir /data_mirror/ref_profiles 0700 root root
+     mount none /data/misc/profiles/ref /data_mirror/ref_profiles bind rec
+ 
+-    mkdir /data/cache 0770 system cache encryption=Require
++    mkdir /data/cache 0770 system cache
+     mkdir /data/cache/recovery 0770 system cache
+     mkdir /data/cache/backup_stage 0700 system system
+     mkdir /data/cache/backup 0700 system system
+ 
+     # Delete these if need be, per b/139193659
+-    mkdir /data/rollback 0700 system system encryption=DeleteIfNecessary
+-    mkdir /data/rollback-observer 0700 system system encryption=DeleteIfNecessary
+-    mkdir /data/rollback-history 0700 system system encryption=DeleteIfNecessary
++    mkdir /data/rollback 0700 system system
++    mkdir /data/rollback-observer 0700 system system
++    mkdir /data/rollback-history 0700 system system
+ 
+     # Create root dir for Incremental Service
+-    mkdir /data/incremental 0771 system system encryption=Require
++    mkdir /data/incremental 0771 system system
+ 
+     # Create directories for statsd
+     mkdir /data/misc/stats-active-metric/ 0770 statsd system
+@@ -1025,9 +1010,8 @@ on post-fs-data
+     chown system /sys/kernel/security/safesetid/uid_allowlist_policy
+ 
+     wait_for_prop apexd.status activated
+-    # Wait for KeyMints to receive APEX module info before starting code from updateable APEXes.
+-    # This is to prevent APEX modules from interfering in module measurement.
+-    wait_for_prop keystore.module_hash.sent true
++    # picodroid: keystore 系/ART/odsign 均已按 PLAN §3 裁除；以下 wait/exec 移除
++    # （wait_for_prop 无超时，目标服务缺失即永久阻塞；exec 失败还会跳过本 action 余下命令）。
+     perform_apex_config
+ 
+     start system_aconfigd_socket_service
+@@ -1039,33 +1023,20 @@ on post-fs-data
+ 
+     exec_start derive_sdk
+ 
+-    init_user0
++    # picodroid: init_user0 invokes vdc and reboots into recovery without vold.
++    # init_user0
+ 
+     # Set SELinux security contexts on upgrade or policy update.
+     restorecon --recursive --skip-ce /data
+ 
+     # Define and export *CLASSPATH variables
+-    # Must start before 'odsign', as odsign depends on *CLASSPATH variables
+-    exec_start derive_classpath
+-    load_exports /data/system/environ/classpath
+-
+-    # Start ART's oneshot boot service to propagate boot experiment flags to
+-    # dalvik.vm.*. This needs to be done before odsign since odrefresh uses and
+-    # validates those properties against the signed cache-info.xml.
+-    exec_start art_boot
+-
+-    # Start the on-device signing daemon, and wait for it to finish, to ensure
+-    # ART artifacts are generated if needed.
+-    # Must start after 'derive_classpath' to have *CLASSPATH variables set.
+-    start odsign
+-
+-    # Wait for odsign to be done with the key.
+-    wait_for_prop odsign.key.done 1
+-
+-    # Bump the boot level to 1000000000; this prevents further on-device signing.
+-    # This is a special value that shuts down the thread which listens for
+-    # further updates.
+-    setprop keystore.boot_level 1000000000
++    # picodroid: derive_classpath/art_boot/odsign 属 ART 链（已裁），连带其 wait 一并移除。
++    # exec_start derive_classpath
++    # load_exports /data/system/environ/classpath
++    # exec_start art_boot
++    # start odsign
++    # wait_for_prop odsign.key.done 1
++    # setprop keystore.boot_level 1000000000
+ 
+     # Allow apexd to snapshot and restore device encrypted apex data in the case
+     # of a rollback. This should be done immediately after DE_user data keys
+@@ -1089,10 +1060,11 @@ on property:vold.checkpoint_committed=1
+ # It is recommended to put unnecessary data/ initialization from post-fs-data
+ # to start-zygote in device's init.rc to unblock zygote start.
+ on zygote-start
+-    wait_for_prop odsign.verification.done 1
+-    start statsd
+-    start zygote
+-    start zygote_secondary
++    # picodroid: odsign/statsd/zygote 均已裁（PLAN §3）；wait_for_prop 无目标即永久阻塞。
++    # wait_for_prop odsign.verification.done 1
++    # start statsd
++    # start zygote
++    # start zygote_secondary
+ 
+ on boot && property:ro.config.low_ram=true
+     # Tweak background writeout
+@@ -1238,7 +1210,7 @@ on property:sys.boot_completed=1
+     bootchart stop
+     # Setup per_boot directory so other .rc could start to use it on boot_completed
+     exec - system system -- /bin/rm -rf /data/per_boot
+-    mkdir /data/per_boot 0710 system system encryption=Require key=per_boot_ref
++    mkdir /data/per_boot 0710 system system
+ 
+ # system server cannot write to /proc/sys files,
+ # and chown/chmod does not work for /proc/sys/ entries.

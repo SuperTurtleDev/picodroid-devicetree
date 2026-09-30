@@ -1,0 +1,853 @@
+diff --git a/libs/gui/BLASTBufferQueue.cpp b/libs/gui/BLASTBufferQueue.cpp
+index 8000691..edfdf00 100644
+--- a/libs/gui/BLASTBufferQueue.cpp
++++ b/libs/gui/BLASTBufferQueue.cpp
+@@ -41,8 +41,8 @@
+ #include <utils/Singleton.h>
+ #include <utils/Trace.h>
+ 
+-#include <private/gui/ComposerService.h>
+-#include <private/gui/ComposerServiceAIDL.h>
++// picodroid: headless — no SurfaceFlinger — composer service includes removed
++#include <gui/BufferQueue.h>
+ 
+ #include <android-base/thread_annotations.h>
+ 
+@@ -204,7 +204,8 @@ void BLASTBufferQueue::initialize() {
+     mBufferItemConsumer->setName(String8(consumerName.c_str()));
+     mBufferItemConsumer->setFrameAvailableListener(wp<BLASTBufferQueue>::fromExisting(this));
+ 
+-    ComposerServiceAIDL::getComposerService()->getMaxAcquiredBufferCount(&mMaxAcquiredBuffers);
++    // picodroid: headless — no SurfaceFlinger — keep the default max acquired
++    // buffer count; the local buffer queue works without the composer.
+     mBufferItemConsumer->setMaxAcquiredBufferCount(mMaxAcquiredBuffers);
+     mCurrentMaxAcquiredBufferCount = mMaxAcquiredBuffers;
+ 
+diff --git a/libs/gui/DisplayEventReceiver.cpp b/libs/gui/DisplayEventReceiver.cpp
+index 69050ea..9257bf5 100644
+--- a/libs/gui/DisplayEventReceiver.cpp
++++ b/libs/gui/DisplayEventReceiver.cpp
+@@ -67,9 +67,8 @@ status_t DisplayEventReceiver::initCheck() const {
+     if (mDataChannel != nullptr) {
+         return NO_ERROR;
+     }
+-    if (mInitError == NO_INIT && !mSurfaceflingerAlive) {
+-        LOG_ALWAYS_FATAL("Display event receiver failed to initialize due to dead surfaceflinger");
+-    }
++    // picodroid: headless — no SurfaceFlinger — an unconnected receiver is the
++    // normal state (no display events); report NO_INIT instead of aborting.
+     return mInitError;
+ }
+ 
+diff --git a/libs/gui/Surface.cpp b/libs/gui/Surface.cpp
+index 45e332d..b326937 100644
+--- a/libs/gui/Surface.cpp
++++ b/libs/gui/Surface.cpp
+@@ -326,6 +326,9 @@ status_t Surface::getDisplayRefreshCycleDuration(nsecs_t* outRefreshDuration) {
+     (void)outRefreshDuration;
+     return INVALID_OPERATION;
+ #else
++    // picodroid: headless — no SurfaceFlinger — no display refresh cycle
++    if (composerServiceAIDL() == nullptr) return NAME_NOT_FOUND;
++
+     using gui::aidl_utils::statusTFromBinderStatus;
+ 
+     gui::DisplayStatInfo stats;
+@@ -1590,6 +1593,9 @@ void Surface::querySupportedTimestampsLocked() const {
+     }
+     mQueriedSupportedTimestamps = true;
+ 
++    // picodroid: headless — no SurfaceFlinger — no frame timestamps supported
++    if (composerServiceAIDL() == nullptr) return;
++
+     std::vector<FrameEvent> supportedFrameTimestamps;
+     binder::Status status =
+             composerServiceAIDL()->getSupportedFrameTimestamps(&supportedFrameTimestamps);
+diff --git a/libs/gui/SurfaceComposerClient.cpp b/libs/gui/SurfaceComposerClient.cpp
+index d10624d..d8290f2 100644
+--- a/libs/gui/SurfaceComposerClient.cpp
++++ b/libs/gui/SurfaceComposerClient.cpp
+@@ -109,27 +109,10 @@ ComposerService::ComposerService() : Singleton<ComposerService>() {
+ }
+ 
+ bool ComposerService::connectLocked() {
+-    const String16 name("SurfaceFlinger");
+-    mComposerService = waitForService<ISurfaceComposer>(name);
+-    if (mComposerService == nullptr) {
+-        return false; // fatal error or permission problem
+-    }
+-
+-    // Create the death listener.
+-    class DeathObserver : public IBinder::DeathRecipient {
+-        ComposerService& mComposerService;
+-        virtual void binderDied(const wp<IBinder>& who) {
+-            ALOGW("ComposerService remote (surfaceflinger) died [%p]", who.unsafe_get());
+-            mComposerService.composerServiceDied();
+-        }
+-
+-    public:
+-        explicit DeathObserver(ComposerService& mgr) : mComposerService(mgr) {}
+-    };
+-
+-    mDeathObserver = sp<DeathObserver>::make(*const_cast<ComposerService*>(this));
+-    IInterface::asBinder(mComposerService)->linkToDeath(mDeathObserver);
+-    return true;
++    // picodroid: headless — no SurfaceFlinger — never connect and never block;
++    // getComposerService() callers must tolerate nullptr.
++    mComposerService = nullptr;
++    return false;
+ }
+ 
+ /*static*/ sp<ISurfaceComposer> ComposerService::getComposerService() {
+@@ -155,27 +138,11 @@ ComposerServiceAIDL::ComposerServiceAIDL() : Singleton<ComposerServiceAIDL>() {
+ }
+ 
+ bool ComposerServiceAIDL::connectLocked() {
+-    const String16 name("SurfaceFlingerAIDL");
+-    mComposerService = waitForService<gui::ISurfaceComposer>(name);
+-    if (mComposerService == nullptr) {
+-        return false; // fatal error or permission problem
+-    }
+-
+-    // Create the death listener.
+-    class DeathObserver : public IBinder::DeathRecipient {
+-        ComposerServiceAIDL& mComposerService;
+-        virtual void binderDied(const wp<IBinder>& who) {
+-            ALOGW("ComposerService aidl remote (surfaceflinger) died [%p]", who.unsafe_get());
+-            mComposerService.composerServiceDied();
+-        }
+-
+-    public:
+-        explicit DeathObserver(ComposerServiceAIDL& mgr) : mComposerService(mgr) {}
+-    };
+-
+-    mDeathObserver = sp<DeathObserver>::make(*const_cast<ComposerServiceAIDL*>(this));
+-    IInterface::asBinder(mComposerService)->linkToDeath(mDeathObserver);
+-    return true;
++    // picodroid: headless — no SurfaceFlinger — never connect and never block
++    // (cameraserver used to hang forever in waitForService here during camera
++    // open); getComposerService() callers must tolerate nullptr.
++    mComposerService = nullptr;
++    return false;
+ }
+ 
+ /*static*/ sp<gui::ISurfaceComposer> ComposerServiceAIDL::getComposerService() {
+@@ -196,6 +163,19 @@ void ComposerServiceAIDL::composerServiceDied() {
+     mDeathObserver = nullptr;
+ }
+ 
++// picodroid: headless — no SurfaceFlinger — ABI keeper. Deleting the
++// waitForService<gui::ISurfaceComposer>() template above also deleted the
++// only reference that pulled the generated AIDL interface implementations
++// (Bn/Bp ISurfaceComposer, IRegionSamplingListener, IFpsListener, the
++// parcelables, ...) out of libgui_aidl_static into libgui.so, which broke
++// components that link against them (libandroid_runtime subclasses
++// BnRegionSamplingListener). asInterface(nullptr) is a pure local null
++// conversion — zero servicemanager lookups, zero binder traffic — it only
++// keeps those interface definitions present in libgui.so.
++sp<gui::ISurfaceComposer> picodroid_keepSurfaceComposerAidlAbi() {
++    return gui::ISurfaceComposer::asInterface(nullptr);
++}
++
+ class DefaultComposerClient : public Singleton<DefaultComposerClient> {
+     Mutex mLock;
+     sp<SurfaceComposerClient> mClient;
+@@ -226,6 +206,9 @@ status_t JankDataListener::flushJankData() {
+         return INVALID_OPERATION;
+     }
+ 
++    // picodroid: headless — no SurfaceFlinger — no jank data source
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return INVALID_OPERATION;
++
+     binder::Status status = ComposerServiceAIDL::getComposerService()->flushJankData(mLayerId);
+     return statusTFromBinderStatus(status);
+ }
+@@ -283,6 +266,8 @@ status_t JankDataListenerFanOut::addListener(const sp<SurfaceControl>& sc,
+     sFanoutInstanceMutex.unlock();
+ 
+     if (registerNeeded) {
++        // picodroid: headless — no SurfaceFlinger — listener tracked locally only
++        if (ComposerServiceAIDL::getComposerService() == nullptr) return OK;
+         binder::Status status =
+                 ComposerServiceAIDL::getComposerService()->addJankListener(layer, fanout);
+         return statusTFromBinderStatus(status);
+@@ -317,6 +302,9 @@ status_t JankDataListenerFanOut::removeListener(const sp<JankDataListener>& list
+         return OK;
+     }
+ 
++    // picodroid: headless — no SurfaceFlinger — nothing registered remotely
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return OK;
++
+     binder::Status status =
+             ComposerServiceAIDL::getComposerService()->removeJankListener(layerId, fanout,
+                                                                           removeAfter);
+@@ -1037,7 +1025,9 @@ std::vector<uint64_t> SurfaceComposerClient::Transaction::getMergedTransactionId
+ }
+ 
+ void SurfaceComposerClient::doUncacheBufferTransaction(uint64_t cacheId) {
++    // picodroid: headless — no SurfaceFlinger — nothing cached remotely to uncache
+     sp<ISurfaceComposer> sf(ComposerService::getComposerService());
++    if (sf == nullptr) return;
+ 
+     TransactionState state(generateId(), ISurfaceComposer::eOneWay, systemTime(), true);
+     client_cache_t uncacheBuffer;
+@@ -1205,6 +1195,15 @@ status_t SurfaceComposerClient::Transaction::apply(bool synchronous, bool oneWay
+     sp<IBinder> applyToken = mApplyToken ? mApplyToken : getDefaultApplyToken();
+ 
+     sp<ISurfaceComposer> sf(ComposerService::getComposerService());
++    if (sf == nullptr) {
++        // picodroid: headless — no SurfaceFlinger — transactions have nowhere to
++        // be applied; drop the state and report success (a real error here makes
++        // BLASTBufferQueue LOG_ALWAYS_FATAL, and no SurfaceControl can exist
++        // without a composer anyway).
++        clear();
++        mStatus = NO_ERROR;
++        return NO_ERROR;
++    }
+     TransactionState state = std::move(mState);
+     status_t binderStatus = sf->setTransactionState(std::move(state), applyToken);
+ 
+@@ -1264,6 +1263,8 @@ sp<IBinder> SurfaceComposerClient::createVirtualDisplay(const std::string& displ
+     const gui::ISurfaceComposer::OptimizationPolicy optimizationPolicy = optimizeForPower
+             ? gui::ISurfaceComposer::OptimizationPolicy::optimizeForPower
+             : gui::ISurfaceComposer::OptimizationPolicy::optimizeForPerformance;
++    // picodroid: headless — no SurfaceFlinger — virtual displays cannot exist
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return nullptr;
+     sp<IBinder> display = nullptr;
+     binder::Status status =
+             ComposerServiceAIDL::getComposerService()->createVirtualDisplay(displayName, isSecure,
+@@ -1275,12 +1276,16 @@ sp<IBinder> SurfaceComposerClient::createVirtualDisplay(const std::string& displ
+ }
+ 
+ status_t SurfaceComposerClient::destroyVirtualDisplay(const sp<IBinder>& displayToken) {
++    // picodroid: headless — no SurfaceFlinger — no virtual display to destroy
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return NAME_NOT_FOUND;
+     return ComposerServiceAIDL::getComposerService()
+             ->destroyVirtualDisplay(displayToken)
+             .transactionError();
+ }
+ 
+ std::vector<PhysicalDisplayId> SurfaceComposerClient::getPhysicalDisplayIds() {
++    // picodroid: headless — no SurfaceFlinger — no physical displays
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return {};
+     std::vector<int64_t> displayIds;
+     std::vector<PhysicalDisplayId> physicalDisplayIds;
+     binder::Status status =
+@@ -1295,6 +1300,8 @@ std::vector<PhysicalDisplayId> SurfaceComposerClient::getPhysicalDisplayIds() {
+ }
+ 
+ sp<IBinder> SurfaceComposerClient::getPhysicalDisplayToken(PhysicalDisplayId displayId) {
++    // picodroid: headless — no SurfaceFlinger — no display tokens
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return nullptr;
+     sp<IBinder> display = nullptr;
+     binder::Status status =
+             ComposerServiceAIDL::getComposerService()->getPhysicalDisplayToken(displayId.value,
+@@ -1304,6 +1311,8 @@ sp<IBinder> SurfaceComposerClient::getPhysicalDisplayToken(PhysicalDisplayId dis
+ 
+ std::optional<gui::StalledTransactionInfo> SurfaceComposerClient::getStalledTransactionInfo(
+         pid_t pid) {
++    // picodroid: headless — no SurfaceFlinger — no transactions, no stalls
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return std::nullopt;
+     std::optional<gui::StalledTransactionInfo> result;
+     ComposerServiceAIDL::getComposerService()->getStalledTransactionInfo(pid, &result);
+     return result;
+@@ -2654,7 +2663,9 @@ sp<IBinder> SurfaceComposerClient::connection() const {
+ 
+ status_t SurfaceComposerClient::linkToComposerDeath(const sp<IBinder::DeathRecipient>& recipient,
+                                                     void* cookie, uint32_t flags) {
++    // picodroid: headless — no SurfaceFlinger — no composer to watch
+     sp<ISurfaceComposer> sf(ComposerService::getComposerService());
++    if (sf == nullptr) return DEAD_OBJECT;
+     return IInterface::asBinder(sf)->linkToDeath(recipient, cookie, flags);
+ }
+ 
+@@ -2670,6 +2681,8 @@ void SurfaceComposerClient::dispose() {
+ }
+ 
+ status_t SurfaceComposerClient::bootFinished() {
++    // picodroid: headless — no SurfaceFlinger — nobody to notify
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return NO_INIT;
+     sp<gui::ISurfaceComposer> sf(ComposerServiceAIDL::getComposerService());
+     binder::Status status = sf->bootFinished();
+     return statusTFromBinderStatus(status);
+@@ -2818,6 +2831,8 @@ status_t SurfaceComposerClient::getLayerFrameStats(const sp<IBinder>& token,
+ 
+ status_t SurfaceComposerClient::getDisplayState(const sp<IBinder>& display,
+                                                 ui::DisplayState* state) {
++    // picodroid: headless — no SurfaceFlinger — no display state
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return NAME_NOT_FOUND;
+     gui::DisplayState ds;
+     binder::Status status =
+             ComposerServiceAIDL::getComposerService()->getDisplayState(display, &ds);
+@@ -2833,6 +2848,8 @@ status_t SurfaceComposerClient::getDisplayState(const sp<IBinder>& display,
+ status_t SurfaceComposerClient::getStaticDisplayInfo(int64_t displayId,
+                                                      ui::StaticDisplayInfo* outInfo) {
+     using Tag = android::gui::DeviceProductInfo::ManufactureOrModelDate::Tag;
++    // picodroid: headless — no SurfaceFlinger — no display info
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return NAME_NOT_FOUND;
+     gui::StaticDisplayInfo ginfo;
+     binder::Status status =
+             ComposerServiceAIDL::getComposerService()->getStaticDisplayInfo(displayId, &ginfo);
+@@ -2943,6 +2960,8 @@ void SurfaceComposerClient::getDynamicDisplayInfoInternal(gui::DynamicDisplayInf
+ 
+ status_t SurfaceComposerClient::getDynamicDisplayInfoFromId(int64_t displayId,
+                                                             ui::DynamicDisplayInfo* outInfo) {
++    // picodroid: headless — no SurfaceFlinger — no display info
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return NAME_NOT_FOUND;
+     gui::DynamicDisplayInfo ginfo;
+     binder::Status status =
+             ComposerServiceAIDL::getComposerService()->getDynamicDisplayInfoFromId(displayId,
+@@ -2955,6 +2974,8 @@ status_t SurfaceComposerClient::getDynamicDisplayInfoFromId(int64_t displayId,
+ 
+ status_t SurfaceComposerClient::getDynamicDisplayInfoFromToken(const sp<IBinder>& display,
+                                                                ui::DynamicDisplayInfo* outInfo) {
++    // picodroid: headless — no SurfaceFlinger — no display info
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return NAME_NOT_FOUND;
+     gui::DynamicDisplayInfo ginfo;
+     binder::Status status =
+             ComposerServiceAIDL::getComposerService()->getDynamicDisplayInfoFromToken(display,
+@@ -2985,6 +3006,8 @@ status_t SurfaceComposerClient::getActiveDisplayMode(const sp<IBinder>& display,
+ 
+ status_t SurfaceComposerClient::setDesiredDisplayModeSpecs(
+         const sp<IBinder>& applyToken, const std::vector<gui::DisplayModeSpecs>& specs) {
++    // picodroid: headless — no SurfaceFlinger — no display modes to set
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return NAME_NOT_FOUND;
+     binder::Status status =
+             ComposerServiceAIDL::getComposerService()->setDesiredDisplayModeSpecs(applyToken,
+                                                                                   specs);
+@@ -2996,6 +3019,8 @@ status_t SurfaceComposerClient::getDesiredDisplayModeSpecs(const sp<IBinder>& di
+     if (!outSpecs) {
+         return BAD_VALUE;
+     }
++    // picodroid: headless — no SurfaceFlinger — no display modes
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return NAME_NOT_FOUND;
+     binder::Status status =
+             ComposerServiceAIDL::getComposerService()->getDesiredDisplayModeSpecs(displayToken,
+                                                                                   outSpecs);
+@@ -3004,6 +3029,8 @@ status_t SurfaceComposerClient::getDesiredDisplayModeSpecs(const sp<IBinder>& di
+ 
+ status_t SurfaceComposerClient::getDisplayNativePrimaries(const sp<IBinder>& display,
+                                                           ui::DisplayPrimaries& outPrimaries) {
++    // picodroid: headless — no SurfaceFlinger — no display primaries
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return NAME_NOT_FOUND;
+     gui::DisplayPrimaries primaries;
+     binder::Status status =
+             ComposerServiceAIDL::getComposerService()->getDisplayNativePrimaries(display,
+@@ -3030,18 +3057,24 @@ status_t SurfaceComposerClient::getDisplayNativePrimaries(const sp<IBinder>& dis
+ 
+ status_t SurfaceComposerClient::setActiveColorMode(const sp<IBinder>& display,
+                                                    ColorMode colorMode) {
++    // picodroid: headless — no SurfaceFlinger — no display color modes
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return NAME_NOT_FOUND;
+     binder::Status status = ComposerServiceAIDL::getComposerService()
+                                     ->setActiveColorMode(display, static_cast<int>(colorMode));
+     return statusTFromBinderStatus(status);
+ }
+ 
+ status_t SurfaceComposerClient::getBootDisplayModeSupport(bool* support) {
++    // picodroid: headless — no SurfaceFlinger — no boot display modes
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return NAME_NOT_FOUND;
+     binder::Status status =
+             ComposerServiceAIDL::getComposerService()->getBootDisplayModeSupport(support);
+     return statusTFromBinderStatus(status);
+ }
+ 
+ status_t SurfaceComposerClient::getOverlaySupport(gui::OverlayProperties* outProperties) {
++    // picodroid: headless — no SurfaceFlinger — no overlay support
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return NAME_NOT_FOUND;
+     binder::Status status =
+             ComposerServiceAIDL::getComposerService()->getOverlaySupport(outProperties);
+     return statusTFromBinderStatus(status);
+@@ -3049,12 +3082,16 @@ status_t SurfaceComposerClient::getOverlaySupport(gui::OverlayProperties* outPro
+ 
+ status_t SurfaceComposerClient::setBootDisplayMode(const sp<IBinder>& display,
+                                                    ui::DisplayModeId displayModeId) {
++    // picodroid: headless — no SurfaceFlinger — no boot display modes
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return NAME_NOT_FOUND;
+     binder::Status status = ComposerServiceAIDL::getComposerService()
+                                     ->setBootDisplayMode(display, static_cast<int>(displayModeId));
+     return statusTFromBinderStatus(status);
+ }
+ 
+ status_t SurfaceComposerClient::clearBootDisplayMode(const sp<IBinder>& display) {
++    // picodroid: headless — no SurfaceFlinger — no boot display modes
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return NAME_NOT_FOUND;
+     binder::Status status =
+             ComposerServiceAIDL::getComposerService()->clearBootDisplayMode(display);
+     return statusTFromBinderStatus(status);
+@@ -3062,6 +3099,8 @@ status_t SurfaceComposerClient::clearBootDisplayMode(const sp<IBinder>& display)
+ 
+ status_t SurfaceComposerClient::getHdrConversionCapabilities(
+         std::vector<gui::HdrConversionCapability>* hdrConversionCapabilities) {
++    // picodroid: headless — no SurfaceFlinger — no HDR conversion
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return NO_INIT;
+     binder::Status status = ComposerServiceAIDL::getComposerService()->getHdrConversionCapabilities(
+             hdrConversionCapabilities);
+     return statusTFromBinderStatus(status);
+@@ -3070,6 +3109,8 @@ status_t SurfaceComposerClient::getHdrConversionCapabilities(
+ status_t SurfaceComposerClient::setHdrConversionStrategy(
+         const gui::HdrConversionStrategy& hdrConversionStrategy,
+         ui::Hdr* outPreferredHdrOutputType) {
++    // picodroid: headless — no SurfaceFlinger — no HDR conversion
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return NO_INIT;
+     int hdrType;
+     binder::Status status = ComposerServiceAIDL::getComposerService()
+                                     ->setHdrConversionStrategy(hdrConversionStrategy, &hdrType);
+@@ -3078,18 +3119,24 @@ status_t SurfaceComposerClient::setHdrConversionStrategy(
+ }
+ 
+ status_t SurfaceComposerClient::getHdrOutputConversionSupport(bool* isSupported) {
++    // picodroid: headless — no SurfaceFlinger — no HDR conversion
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return NO_INIT;
+     binder::Status status =
+             ComposerServiceAIDL::getComposerService()->getHdrOutputConversionSupport(isSupported);
+     return statusTFromBinderStatus(status);
+ }
+ 
+ status_t SurfaceComposerClient::setGameModeFrameRateOverride(uid_t uid, float frameRate) {
++    // picodroid: headless — no SurfaceFlinger — no frame-rate overrides
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return NO_INIT;
+     binder::Status status =
+             ComposerServiceAIDL::getComposerService()->setGameModeFrameRateOverride(uid, frameRate);
+     return statusTFromBinderStatus(status);
+ }
+ 
+ status_t SurfaceComposerClient::setGameDefaultFrameRateOverride(uid_t uid, float frameRate) {
++    // picodroid: headless — no SurfaceFlinger — no frame-rate overrides
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return NO_INIT;
+     binder::Status status =
+             ComposerServiceAIDL::getComposerService()->setGameDefaultFrameRateOverride(uid,
+                                                                                        frameRate);
+@@ -3098,12 +3145,16 @@ status_t SurfaceComposerClient::setGameDefaultFrameRateOverride(uid_t uid, float
+ 
+ status_t SurfaceComposerClient::updateSmallAreaDetection(std::vector<int32_t>& appIds,
+                                                          std::vector<float>& thresholds) {
++    // picodroid: headless — no SurfaceFlinger — no display area tracking
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return NO_INIT;
+     binder::Status status =
+             ComposerServiceAIDL::getComposerService()->updateSmallAreaDetection(appIds, thresholds);
+     return statusTFromBinderStatus(status);
+ }
+ 
+ status_t SurfaceComposerClient::setSmallAreaDetectionThreshold(int32_t appId, float threshold) {
++    // picodroid: headless — no SurfaceFlinger — no display area tracking
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return NO_INIT;
+     binder::Status status =
+             ComposerServiceAIDL::getComposerService()->setSmallAreaDetectionThreshold(appId,
+                                                                                       threshold);
+@@ -3111,19 +3162,27 @@ status_t SurfaceComposerClient::setSmallAreaDetectionThreshold(int32_t appId, fl
+ }
+ 
+ void SurfaceComposerClient::setAutoLowLatencyMode(const sp<IBinder>& display, bool on) {
++    // picodroid: headless — no SurfaceFlinger — no display to configure
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return;
+     ComposerServiceAIDL::getComposerService()->setAutoLowLatencyMode(display, on);
+ }
+ 
+ void SurfaceComposerClient::setGameContentType(const sp<IBinder>& display, bool on) {
++    // picodroid: headless — no SurfaceFlinger — no display to configure
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return;
+     ComposerServiceAIDL::getComposerService()->setGameContentType(display, on);
+ }
+ 
+ void SurfaceComposerClient::setDisplayPowerMode(const sp<IBinder>& token, int mode) {
++    // picodroid: headless — no SurfaceFlinger — no display to power on/off
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return;
+     ComposerServiceAIDL::getComposerService()->setPowerMode(token, mode);
+ }
+ 
+ status_t SurfaceComposerClient::getMaxLayerPictureProfiles(const sp<IBinder>& token,
+                                                            int32_t* outMaxProfiles) {
++    // picodroid: headless — no SurfaceFlinger — no picture profiles
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return NO_INIT;
+     binder::Status status =
+             ComposerServiceAIDL::getComposerService()->getMaxLayerPictureProfiles(token,
+                                                                                   outMaxProfiles);
+@@ -3133,6 +3192,8 @@ status_t SurfaceComposerClient::getMaxLayerPictureProfiles(const sp<IBinder>& to
+ status_t SurfaceComposerClient::getCompositionPreference(
+         ui::Dataspace* defaultDataspace, ui::PixelFormat* defaultPixelFormat,
+         ui::Dataspace* wideColorGamutDataspace, ui::PixelFormat* wideColorGamutPixelFormat) {
++    // picodroid: headless — no SurfaceFlinger — no composition preference
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return NO_INIT;
+     gui::CompositionPreference pref;
+     binder::Status status =
+             ComposerServiceAIDL::getComposerService()->getCompositionPreference(&pref);
+@@ -3146,17 +3207,23 @@ status_t SurfaceComposerClient::getCompositionPreference(
+ }
+ 
+ bool SurfaceComposerClient::getProtectedContentSupport() {
++    // picodroid: headless — no SurfaceFlinger — no protected content support
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return false;
+     bool supported = false;
+     ComposerServiceAIDL::getComposerService()->getProtectedContentSupport(&supported);
+     return supported;
+ }
+ 
+ status_t SurfaceComposerClient::clearAnimationFrameStats() {
++    // picodroid: headless — no SurfaceFlinger — no animation frame stats
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return NO_INIT;
+     binder::Status status = ComposerServiceAIDL::getComposerService()->clearAnimationFrameStats();
+     return statusTFromBinderStatus(status);
+ }
+ 
+ status_t SurfaceComposerClient::getAnimationFrameStats(FrameStats* outStats) {
++    // picodroid: headless — no SurfaceFlinger — no animation frame stats
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return NO_INIT;
+     gui::FrameStats stats;
+     binder::Status status =
+             ComposerServiceAIDL::getComposerService()->getAnimationFrameStats(&stats);
+@@ -3186,6 +3253,9 @@ status_t SurfaceComposerClient::overrideHdrTypes(const sp<IBinder>& display,
+         hdrTypesVector.push_back(static_cast<int32_t>(t));
+     }
+ 
++    // picodroid: headless — no SurfaceFlinger — no HDR types to override
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return NO_INIT;
++
+     binder::Status status =
+             ComposerServiceAIDL::getComposerService()->overrideHdrTypes(display, hdrTypesVector);
+     return statusTFromBinderStatus(status);
+@@ -3193,6 +3263,8 @@ status_t SurfaceComposerClient::overrideHdrTypes(const sp<IBinder>& display,
+ 
+ status_t SurfaceComposerClient::onPullAtom(const int32_t atomId, std::string* outData,
+                                            bool* success) {
++    // picodroid: headless — no SurfaceFlinger — no atoms to pull
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return NO_INIT;
+     gui::PullAtomData pad;
+     binder::Status status = ComposerServiceAIDL::getComposerService()->onPullAtom(atomId, &pad);
+     if (status.isOk()) {
+@@ -3210,6 +3282,9 @@ status_t SurfaceComposerClient::getDisplayedContentSamplingAttributes(const sp<I
+         return BAD_VALUE;
+     }
+ 
++    // picodroid: headless — no SurfaceFlinger — no displayed content
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return NO_INIT;
++
+     gui::ContentSamplingAttributes attrs;
+     binder::Status status = ComposerServiceAIDL::getComposerService()
+                                     ->getDisplayedContentSamplingAttributes(display, &attrs);
+@@ -3224,6 +3299,8 @@ status_t SurfaceComposerClient::getDisplayedContentSamplingAttributes(const sp<I
+ status_t SurfaceComposerClient::setDisplayContentSamplingEnabled(const sp<IBinder>& display,
+                                                                  bool enable, uint8_t componentMask,
+                                                                  uint64_t maxFrames) {
++    // picodroid: headless — no SurfaceFlinger — no displayed content
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return NO_INIT;
+     binder::Status status =
+             ComposerServiceAIDL::getComposerService()
+                     ->setDisplayContentSamplingEnabled(display, enable,
+@@ -3239,6 +3316,9 @@ status_t SurfaceComposerClient::getDisplayedContentSample(const sp<IBinder>& dis
+         return BAD_VALUE;
+     }
+ 
++    // picodroid: headless — no SurfaceFlinger — no displayed content samples
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return NO_INIT;
++
+     gui::DisplayedFrameStats stats;
+     binder::Status status =
+             ComposerServiceAIDL::getComposerService()->getDisplayedContentSample(display, maxFrames,
+@@ -3268,6 +3348,8 @@ status_t SurfaceComposerClient::getDisplayedContentSample(const sp<IBinder>& dis
+ 
+ status_t SurfaceComposerClient::isWideColorDisplay(const sp<IBinder>& display,
+                                                    bool* outIsWideColorDisplay) {
++    // picodroid: headless — no SurfaceFlinger — no display, not wide color
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return NAME_NOT_FOUND;
+     binder::Status status =
+             ComposerServiceAIDL::getComposerService()->isWideColorDisplay(display,
+                                                                           outIsWideColorDisplay);
+@@ -3282,6 +3364,8 @@ status_t SurfaceComposerClient::addRegionSamplingListener(
+     rect.top = samplingArea.top;
+     rect.right = samplingArea.right;
+     rect.bottom = samplingArea.bottom;
++    // picodroid: headless — no SurfaceFlinger — no region to sample
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return NO_INIT;
+     binder::Status status =
+             ComposerServiceAIDL::getComposerService()->addRegionSamplingListener(rect,
+                                                                                  stopLayerHandle,
+@@ -3297,6 +3381,8 @@ status_t SurfaceComposerClient::addRegionSamplingListenerWithStopLayerId(
+     rect.top = samplingArea.top;
+     rect.right = samplingArea.right;
+     rect.bottom = samplingArea.bottom;
++    // picodroid: headless — no SurfaceFlinger — no region to sample
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return NO_INIT;
+     binder::Status status =
+             ComposerServiceAIDL::getComposerService()
+                     ->addRegionSamplingListenerWithStopLayerId(rect, stopLayerId, listener);
+@@ -3305,6 +3391,8 @@ status_t SurfaceComposerClient::addRegionSamplingListenerWithStopLayerId(
+ 
+ status_t SurfaceComposerClient::removeRegionSamplingListener(
+         const sp<IRegionSamplingListener>& listener) {
++    // picodroid: headless — no SurfaceFlinger — nothing registered remotely
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return OK;
+     binder::Status status =
+             ComposerServiceAIDL::getComposerService()->removeRegionSamplingListener(listener);
+     return statusTFromBinderStatus(status);
+@@ -3312,6 +3400,8 @@ status_t SurfaceComposerClient::removeRegionSamplingListener(
+ 
+ status_t SurfaceComposerClient::getRegionSamplingListeners(
+         std::vector<gui::RegionSamplingDescriptor>* listeners) {
++    // picodroid: headless — no SurfaceFlinger — no sampling listeners
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return NO_INIT;
+     binder::Status status =
+             ComposerServiceAIDL::getComposerService()->getRegionSamplingListeners(listeners);
+     return statusTFromBinderStatus(status);
+@@ -3319,18 +3409,24 @@ status_t SurfaceComposerClient::getRegionSamplingListeners(
+ 
+ status_t SurfaceComposerClient::addFpsListener(int32_t taskId,
+                                                const sp<gui::IFpsListener>& listener) {
++    // picodroid: headless — no SurfaceFlinger — no fps source
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return NO_INIT;
+     binder::Status status =
+             ComposerServiceAIDL::getComposerService()->addFpsListener(taskId, listener);
+     return statusTFromBinderStatus(status);
+ }
+ 
+ status_t SurfaceComposerClient::removeFpsListener(const sp<gui::IFpsListener>& listener) {
++    // picodroid: headless — no SurfaceFlinger — nothing registered remotely
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return OK;
+     binder::Status status = ComposerServiceAIDL::getComposerService()->removeFpsListener(listener);
+     return statusTFromBinderStatus(status);
+ }
+ 
+ status_t SurfaceComposerClient::addTunnelModeEnabledListener(
+         const sp<gui::ITunnelModeEnabledListener>& listener) {
++    // picodroid: headless — no SurfaceFlinger — no tunnel mode
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return NO_INIT;
+     binder::Status status =
+             ComposerServiceAIDL::getComposerService()->addTunnelModeEnabledListener(listener);
+     return statusTFromBinderStatus(status);
+@@ -3338,12 +3434,16 @@ status_t SurfaceComposerClient::addTunnelModeEnabledListener(
+ 
+ status_t SurfaceComposerClient::removeTunnelModeEnabledListener(
+         const sp<gui::ITunnelModeEnabledListener>& listener) {
++    // picodroid: headless — no SurfaceFlinger — nothing registered remotely
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return OK;
+     binder::Status status =
+             ComposerServiceAIDL::getComposerService()->removeTunnelModeEnabledListener(listener);
+     return statusTFromBinderStatus(status);
+ }
+ 
+ bool SurfaceComposerClient::getDisplayBrightnessSupport(const sp<IBinder>& displayToken) {
++    // picodroid: headless — no SurfaceFlinger — no display brightness
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return false;
+     bool support = false;
+     binder::Status status =
+             ComposerServiceAIDL::getComposerService()->getDisplayBrightnessSupport(displayToken,
+@@ -3353,6 +3453,8 @@ bool SurfaceComposerClient::getDisplayBrightnessSupport(const sp<IBinder>& displ
+ 
+ status_t SurfaceComposerClient::setDisplayBrightness(const sp<IBinder>& displayToken,
+                                                      const gui::DisplayBrightness& brightness) {
++    // picodroid: headless — no SurfaceFlinger — no display brightness
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return NAME_NOT_FOUND;
+     binder::Status status =
+             ComposerServiceAIDL::getComposerService()->setDisplayBrightness(displayToken,
+                                                                             brightness);
+@@ -3361,6 +3463,8 @@ status_t SurfaceComposerClient::setDisplayBrightness(const sp<IBinder>& displayT
+ 
+ status_t SurfaceComposerClient::addHdrLayerInfoListener(
+         const sp<IBinder>& displayToken, const sp<gui::IHdrLayerInfoListener>& listener) {
++    // picodroid: headless — no SurfaceFlinger — no HDR layer info
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return NO_INIT;
+     binder::Status status =
+             ComposerServiceAIDL::getComposerService()->addHdrLayerInfoListener(displayToken,
+                                                                                listener);
+@@ -3369,6 +3473,8 @@ status_t SurfaceComposerClient::addHdrLayerInfoListener(
+ 
+ status_t SurfaceComposerClient::removeHdrLayerInfoListener(
+         const sp<IBinder>& displayToken, const sp<gui::IHdrLayerInfoListener>& listener) {
++    // picodroid: headless — no SurfaceFlinger — nothing registered remotely
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return OK;
+     binder::Status status =
+             ComposerServiceAIDL::getComposerService()->removeHdrLayerInfoListener(displayToken,
+                                                                                   listener);
+@@ -3377,6 +3483,8 @@ status_t SurfaceComposerClient::removeHdrLayerInfoListener(
+ 
+ status_t SurfaceComposerClient::addActivePictureListener(
+         const sp<gui::IActivePictureListener>& listener) {
++    // picodroid: headless — no SurfaceFlinger — no picture layers
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return NO_INIT;
+     binder::Status status =
+             ComposerServiceAIDL::getComposerService()->addActivePictureListener(listener);
+     return statusTFromBinderStatus(status);
+@@ -3384,6 +3492,8 @@ status_t SurfaceComposerClient::addActivePictureListener(
+ 
+ status_t SurfaceComposerClient::removeActivePictureListener(
+         const sp<gui::IActivePictureListener>& listener) {
++    // picodroid: headless — no SurfaceFlinger — nothing registered remotely
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return OK;
+     binder::Status status =
+             ComposerServiceAIDL::getComposerService()->removeActivePictureListener(listener);
+     return statusTFromBinderStatus(status);
+@@ -3394,6 +3504,8 @@ sp<IBinder> SurfaceComposerClient::registerShader(const std::string& uniqueShade
+     if (!com_android_graphics_libgui_flags_composition_shaders()) {
+         return nullptr;
+     }
++    // picodroid: headless — no SurfaceFlinger — no shader registry
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return nullptr;
+     sp<IBinder> token = sp<BBinder>::make();
+     binder::Status status =
+             ComposerServiceAIDL::getComposerService()->registerShader(token, uniqueShaderName,
+@@ -3402,10 +3514,14 @@ sp<IBinder> SurfaceComposerClient::registerShader(const std::string& uniqueShade
+ }
+ 
+ void SurfaceComposerClient::unregisterShader(const sp<IBinder> shader) {
++    // picodroid: headless — no SurfaceFlinger — nothing registered remotely
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return;
+     ComposerServiceAIDL::getComposerService()->unregisterShader(shader);
+ }
+ 
+ status_t SurfaceComposerClient::notifyPowerBoost(int32_t boostId) {
++    // picodroid: headless — no SurfaceFlinger — nobody to notify
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return NO_INIT;
+     binder::Status status = ComposerServiceAIDL::getComposerService()->notifyPowerBoost(boostId);
+     return statusTFromBinderStatus(status);
+ }
+@@ -3413,6 +3529,8 @@ status_t SurfaceComposerClient::notifyPowerBoost(int32_t boostId) {
+ status_t SurfaceComposerClient::setGlobalShadowSettings(const half4& ambientColor,
+                                                         const half4& spotColor, float lightPosY,
+                                                         float lightPosZ, float lightRadius) {
++    // picodroid: headless — no SurfaceFlinger — no shadows to render
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return NO_INIT;
+     gui::Color ambientColorG, spotColorG;
+     ambientColorG.r = ambientColor.r;
+     ambientColorG.g = ambientColor.g;
+@@ -3432,6 +3550,8 @@ status_t SurfaceComposerClient::setGlobalShadowSettings(const half4& ambientColo
+ 
+ std::optional<DisplayDecorationSupport> SurfaceComposerClient::getDisplayDecorationSupport(
+         const sp<IBinder>& displayToken) {
++    // picodroid: headless — no SurfaceFlinger — no display decoration
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return std::nullopt;
+     std::optional<gui::DisplayDecorationSupport> gsupport;
+     binder::Status status =
+             ComposerServiceAIDL::getComposerService()->getDisplayDecorationSupport(displayToken,
+@@ -3451,6 +3571,8 @@ std::optional<DisplayDecorationSupport> SurfaceComposerClient::getDisplayDecorat
+ }
+ 
+ int SurfaceComposerClient::getGpuContextPriority() {
++    // picodroid: headless — no SurfaceFlinger — default GPU context priority
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return 0;
+     int priority;
+     binder::Status status =
+             ComposerServiceAIDL::getComposerService()->getGpuContextPriority(&priority);
+@@ -3464,6 +3586,10 @@ int SurfaceComposerClient::getGpuContextPriority() {
+ 
+ android::base::Result<gui::WindowInfosUpdate> SurfaceComposerClient::addWindowInfosListener(
+         sp<WindowInfosListener> windowInfosListener) {
++    // picodroid: headless — no SurfaceFlinger — no window infos publisher
++    if (ComposerServiceAIDL::getComposerService() == nullptr) {
++        return android::base::Error(NO_INIT);
++    }
+     return WindowInfosListenerReporter::getInstance()
+             ->addWindowInfosListener(std::move(windowInfosListener),
+                                      ComposerServiceAIDL::getComposerService());
+@@ -3471,12 +3597,16 @@ android::base::Result<gui::WindowInfosUpdate> SurfaceComposerClient::addWindowIn
+ 
+ status_t SurfaceComposerClient::removeWindowInfosListener(
+         const sp<WindowInfosListener>& windowInfosListener) {
++    // picodroid: headless — no SurfaceFlinger — nothing registered remotely
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return OK;
+     return WindowInfosListenerReporter::getInstance()
+             ->removeWindowInfosListener(windowInfosListener,
+                                         ComposerServiceAIDL::getComposerService());
+ }
+ 
+ void SurfaceComposerClient::notifyShutdown() {
++    // picodroid: headless — no SurfaceFlinger — nobody to notify
++    if (ComposerServiceAIDL::getComposerService() == nullptr) return;
+     ComposerServiceAIDL::getComposerService()->notifyShutdown();
+ }
+ 
+diff --git a/libs/gui/WindowInfosListenerReporter.cpp b/libs/gui/WindowInfosListenerReporter.cpp
+index 8f7f97b..0840176 100644
+--- a/libs/gui/WindowInfosListenerReporter.cpp
++++ b/libs/gui/WindowInfosListenerReporter.cpp
+@@ -38,6 +38,12 @@ android::base::Result<gui::WindowInfosUpdate> WindowInfosListenerReporter::addWi
+         const sp<gui::ISurfaceComposer>& surfaceComposer) {
+     std::scoped_lock lock(mListenersMutex);
+     if (mWindowInfosListeners.empty()) {
++        // picodroid: headless — no SurfaceFlinger — track the listener locally
++        // only; there is no remote registry to join.
++        if (surfaceComposer == nullptr) {
++            mWindowInfosListeners.emplace(std::move(windowInfosListener));
++            return mLastUpdate;
++        }
+         gui::WindowInfosListenerInfo listenerInfo;
+         binder::Status status =
+                 surfaceComposer
+@@ -64,6 +70,15 @@ status_t WindowInfosListenerReporter::removeWindowInfosListener(
+         return OK;
+     }
+ 
++    // picodroid: headless — no SurfaceFlinger — nothing was registered remotely;
++    // still drop the stale state.
++    if (surfaceComposer == nullptr) {
++        mLastUpdate = gui::WindowInfosUpdate();
++        mWindowInfosPublisher.clear();
++        mListenerId = UNASSIGNED_LISTENER_ID;
++        return OK;
++    }
++
+     if (binder::Status status = surfaceComposer->removeWindowInfosListener(
+                 sp<WindowInfosListenerReporter>::fromExisting(this));
+         !status.isOk()) {
+diff --git a/media/libstagefright/VideoFrameScheduler.cpp b/media/libstagefright/VideoFrameScheduler.cpp
+index de8e425..5b18c53 100644
+--- a/media/libstagefright/VideoFrameScheduler.cpp
++++ b/media/libstagefright/VideoFrameScheduler.cpp
+@@ -19,11 +19,10 @@
+ #include <utils/Log.h>
+ #define ATRACE_TAG ATRACE_TAG_VIDEO
+ #include <utils/Trace.h>
+-#include <utils/String16.h>
+ 
+-#include <binder/IServiceManager.h>
+-#include <android/gui/ISurfaceComposer.h>
+-#include <android/gui/DisplayStatInfo.h>
++// picodroid: headless — no SurfaceFlinger — composer service lookup removed;
++// updateVsync() runs on wall-clock defaults.
++#include <android/gui/ISurfaceComposer.h> // for the mComposer member type
+ 
+ #include <media/stagefright/foundation/ADebug.h>
+ #include <media/stagefright/foundation/AUtils.h>
+@@ -38,27 +37,8 @@ void VideoFrameScheduler::updateVsync() {
+     mVsyncRefreshAt = systemTime(SYSTEM_TIME_MONOTONIC) + kVsyncRefreshPeriod;
+     mVsyncTime = 0;
+     mVsyncPeriod = 0;
+-
+-    // TODO(b/220021255): wrap this into SurfaceComposerClient
+-    if (mComposer == NULL) {
+-        String16 name("SurfaceFlingerAIDL");
+-        sp<IServiceManager> sm = defaultServiceManager();
+-        mComposer = interface_cast<gui::ISurfaceComposer>(sm->checkService(name));
+-    }
+-    if (mComposer != NULL) {
+-        gui::DisplayStatInfo stats;
+-        binder::Status status = mComposer->getDisplayStats(nullptr/* display */, &stats);
+-        if (status.isOk()) {
+-            ALOGV("vsync time:%lld period:%lld",
+-                    (long long)stats.vsyncTime, (long long)stats.vsyncPeriod);
+-            mVsyncTime = stats.vsyncTime;
+-            mVsyncPeriod = stats.vsyncPeriod;
+-        } else {
+-            ALOGW("getDisplayStats returned %d", status.transactionError());
+-        }
+-    } else {
+-        ALOGW("could not get surface mComposer service");
+-    }
++    // picodroid: headless — no SurfaceFlinger — no vsync source; the scheduler
++    // keeps running on wall-clock defaults (mVsyncPeriod == 0).
+ }
+ 
+ void VideoFrameScheduler::release() {
+diff --git a/services/camera/libcameraservice/device3/Camera3BufferManager.cpp b/services/camera/libcameraservice/device3/Camera3BufferManager.cpp
+index 59fbc32..ed4b209 100644
+--- a/services/camera/libcameraservice/device3/Camera3BufferManager.cpp
++++ b/services/camera/libcameraservice/device3/Camera3BufferManager.cpp
+@@ -21,8 +21,7 @@
+ #include <sstream>
+ 
+ #include <com_android_internal_camera_flags.h>
+-#include <gui/ISurfaceComposer.h>
+-#include <private/gui/ComposerService.h>
++// picodroid: headless — no SurfaceFlinger — unused composer includes removed
+ #include <utils/Log.h>
+ #include <utils/Trace.h>
+ #include <camera/StringUtils.h>

@@ -1,0 +1,1150 @@
+diff --git a/services/camera/libcameraservice/CameraService.cpp b/services/camera/libcameraservice/CameraService.cpp
+index cc7dab4..00556c3 100644
+--- a/services/camera/libcameraservice/CameraService.cpp
++++ b/services/camera/libcameraservice/CameraService.cpp
+@@ -75,7 +75,7 @@
+ #include <system/camera_vendor_tags.h>
+ #include <system/camera_metadata.h>
+ #include <binder/IServiceManager.h>
+-#include <binder/IActivityManager.h>
++// picodroid: no system_server — IActivityManager ("activity") never exists, interface unused
+ #include <camera/CameraUtils.h>
+ #include <camera/StringUtils.h>
+ 
+@@ -91,9 +91,7 @@
+ #include "utils/Utils.h"
+ 
+ namespace {
+-    const char* kActivityServiceName = "activity";
+-    const char* kSensorPrivacyServiceName = "sensor_privacy";
+-    const char* kAppopsServiceName = "appops";
++    // picodroid: no system_server — activity/sensor_privacy/appops service names removed
+     const char* kProcessInfoServiceName = "processinfo";
+     const char* kVirtualDeviceBackCameraId = "0";
+     const char* kVirtualDeviceFrontCameraId = "1";
+@@ -172,7 +170,7 @@ static const std::string &sCameraInjectExternalCameraPermission =
+         AttributionAndPermissionUtils::sCameraInjectExternalCameraPermission;
+ 
+ // Constant integer for FGS Logging, used to denote the API type for logger
+-static const int LOG_FGS_CAMERA_API = 1;
++// picodroid: no system_server — IActivityManager FGS logging (LOG_FGS_CAMERA_API) removed
+ const char *sFileName = "lastOpenSessionDumpFile";
+ static constexpr int32_t kSystemNativeClientScore = resource_policy::PERCEPTIBLE_APP_ADJ;
+ static constexpr int32_t kSystemNativeClientState =
+@@ -201,6 +199,8 @@ CameraService::CameraService(
+         mSoundRef(0), mInitialized(false),
+         mAudioRestriction(ICameraDeviceUser::AudioRestriction::NONE) {
+     ALOGI("CameraService started (pid=%d)", getpid());
++    // picodroid: no system_server — user switch events never arrive, always allow user 0
++    mAllowedUsers.insert(USER_SYSTEM);
+     mAttributionAndPermissionUtils->setCameraService(this);
+     mServiceLockWrapper = std::make_shared<WaitableMutexWrapper>(&mServiceLock);
+     mMemFd = memfd_create(sFileName, MFD_ALLOW_SEALING);
+@@ -214,13 +214,8 @@ void CameraService::instantiate() {
+     CameraService::publish(true);
+ }
+ 
+-void CameraService::onServiceRegistration(const String16& name, const sp<IBinder>&) {
+-    if (name != toString16(kAppopsServiceName)) {
+-        return;
+-    }
+-
+-    ALOGV("appops service registered. setting camera audio restriction");
+-    mAppOps.setCameraAudioRestriction(static_cast<int32_t>(mAudioRestriction));
++void CameraService::onServiceRegistration(const String16& /*name*/, const sp<IBinder>&) {
++    // picodroid: no system_server — appops never registers, nothing to do
+ }
+ 
+ void CameraService::onFirstRef()
+@@ -247,17 +242,7 @@ void CameraService::onFirstRef()
+     mSensorPrivacyPolicy->registerSelf();
+     mInjectionStatusListener = new InjectionStatusListener(this);
+ 
+-    // appops function setCamerAudioRestriction uses getService which
+-    // is blocking till the appops service is ready. To enable early
+-    // boot availability for cameraservice, use checkService which is
+-    // non blocking and register for notifications
+-    sp<IServiceManager> sm = defaultServiceManager();
+-    sp<IBinder> binder = sm->checkService(toString16(kAppopsServiceName));
+-    if (!binder) {
+-        sm->registerForNotifications(toString16(kAppopsServiceName), this);
+-    } else {
+-        mAppOps.setCameraAudioRestriction(static_cast<int32_t>(mAudioRestriction));
+-    }
++    // picodroid: no system_server — appops never exists, skip camera audio restriction push
+ 
+     sp<HidlCameraService> hcs = HidlCameraService::getInstance(this);
+     if (hcs->registerAsService() != android::OK) {
+@@ -2067,14 +2052,12 @@ status_t CameraService::handleEvictionsLocked(const std::string& cameraId, int c
+ 
+         sp<IServiceManager> sm = defaultServiceManager();
+         sp<IBinder> binder = sm->checkService(String16(kProcessInfoServiceName));
+-        if (!binder && isAutomotivePrivilegedClient(getCallingUid())) {
+-            // If processinfo service is not available and the client is automotive privileged
+-            // client used for safety critical uses cases such as rear-view and surround-view which
+-            // needs to be available before android boot completes, then use the hardcoded values
+-            // for the process state and priority score. As this scenario is before android system
+-            // services are up and client is native client, hence using NATIVE_ADJ as the priority
+-            // score and state as PROCESS_STATE_BOUND_TOP as such automotive apps need to be
+-            // visible on the top.
++        // picodroid: no system_server — processinfo never exists, treat every client as
++        // top priority instead of failing (or blocking) on the process state query
++        if (!binder) {
++            // If processinfo service is not available, use the hardcoded values for the
++            // process state and priority score: NATIVE_ADJ as the priority score and
++            // PROCESS_STATE_BOUND_TOP as the state, so clients are treated as visible on top.
+             clientDescriptor = CameraClientManager::makeClientDescriptor(cameraId,
+                     sp<BasicClient>{nullptr}, static_cast<int32_t>(state->getCost()),
+                     state->getConflicting(), resource_policy::NATIVE_ADJ, clientPid,
+@@ -2305,13 +2288,7 @@ Status CameraService::connect(
+ 
+     *device = client;
+ 
+-    const sp<IServiceManager> sm(defaultServiceManager());
+-    const auto& mActivityManager = getActivityManager();
+-    if (mActivityManager) {
+-        mActivityManager->logFgsApiBegin(LOG_FGS_CAMERA_API,
+-            getCallingUid(),
+-            getCallingPid());
+-    }
++    // picodroid: no system_server — FGS API logging via IActivityManager removed
+ 
+     return ret;
+ }
+@@ -2509,13 +2486,7 @@ Status CameraService::connectDeviceImpl(
+             ALOGE("%s: Error while creating the file: %s", __FUNCTION__, sFileName);
+         }
+     }
+-    const sp<IServiceManager> sm(defaultServiceManager());
+-    const auto& mActivityManager = getActivityManager();
+-    if (mActivityManager) {
+-        mActivityManager->logFgsApiBegin(LOG_FGS_CAMERA_API,
+-            callingUid,
+-            callingPid);
+-    }
++    // picodroid: no system_server — FGS API logging via IActivityManager removed
+     return ret;
+ }
+ 
+@@ -4290,21 +4261,7 @@ CameraService::BasicClient::BasicClient(
+         sCameraService = cameraService;
+     }
+ 
+-    // There are 2 scenarios in which a client won't have AppOps operations
+-    // (both scenarios : native clients)
+-    //    1) It's an system native client*, the package name will be empty
+-    //       and it will return from this function in the previous if condition
+-    //       (This is the same as the previously existing behavior).
+-    //    2) It is a system native client, but its package name has been
+-    //       modified for debugging, however it still must not use AppOps since
+-    //       the package name is not a real one.
+-    //
+-    //       * system native client - native client with UID < AID_APP_START. It
+-    //         doesn't exclude clients not on the system partition.
+-    if (!mSystemNativeClient) {
+-        mAppOpsManager = std::make_unique<AppOpsManager>();
+-    }
+-
++    // picodroid: no system_server — AppOpsManager never created, app ops checks removed
+     mUidIsTrusted = isTrustedCallingUid(mClientAttribution.uid);
+ }
+ 
+@@ -4349,12 +4306,7 @@ binder::Status CameraService::BasicClient::disconnect() {
+     // client shouldn't be able to call into us anymore
+     mCallingPid = 0;
+ 
+-    const auto& mActivityManager = getActivityManager();
+-    if (mActivityManager) {
+-        mActivityManager->logFgsApiEnd(LOG_FGS_CAMERA_API,
+-            getCallingUid(),
+-            getCallingPid());
+-    }
++    // picodroid: no system_server — FGS API logging via IActivityManager removed
+ 
+     return res;
+ }
+@@ -4484,23 +4436,7 @@ status_t CameraService::BasicClient::handleAppOpMode(int32_t mode) {
+ status_t CameraService::BasicClient::notifyCameraOpening() {
+     ATRACE_CALL();
+ 
+-    // Check for camera access when creating the client. startCameraStreamingOps()
+-    // marks the camera as streaming through checkPermissionsForCameraForStartDataDelivery().
+-    // startCameraStreamingOps() itself is called after the StatusTracker thread notifies the
+-    // BasicClient that the camera device is active. While that does do a check on the op status,
+-    // it is asynchronous and frames may leak, so we do a check here as well, in case the client is
+-    // already disallowed from using the camera at client initialization time.
+-    if (mAppOpsManager != nullptr) {
+-        int32_t mode = mAppOpsManager->checkOperationForDevice(AppOpsManager::OP_CAMERA,
+-                                                             getClientUid(),
+-                                                             toString16(getPackageName()),
+-                                                             toString16(getClientAttributionTag()),
+-                                                             mClientAttribution.deviceId);
+-        status_t res = handleAppOpMode(mode);
+-        if (res != OK) {
+-            return res;
+-        }
+-    }
++    // picodroid: no system_server — app ops camera access check removed (always allowed)
+     mCameraOpen = true;
+ 
+     // Transition device availability listeners from PRESENT -> NOT_AVAILABLE
+@@ -4535,25 +4471,7 @@ status_t CameraService::BasicClient::startCameraStreamingOps() {
+     ALOGI("Start camera streaming for %s (PID %d, UID %d)",
+         getPackageName().c_str(), getClientCallingPid(), getClientUid());
+ 
+-    if (mAppOpsManager != nullptr) {
+-        ALOGV("%s: Start data delivery for uid %d", __FUNCTION__, getClientUid());
+-
+-        const PermissionChecker::PermissionResult result =
+-                checkPermissionsForCameraForStartDataDelivery(mCameraIdStr, mClientAttribution);
+-        status_t res = handlePermissionResult(result);
+-        if (res != OK) {
+-            return res;
+-        }
+-
+-        mOpsCallback = new OpsCallback(this);
+-        std::for_each(AttrSourceItr{mClientAttribution}, AttrSourceItr::end(),
+-                    [&](const auto& attr) {
+-                        mAppOpsManager->startWatchingMode(
+-                                AppOpsManager::OP_CAMERA,
+-                                toString16(attr.packageName.value_or("")),
+-                                AppOpsManager::WATCH_FOREGROUND_CHANGES, mOpsCallback);
+-                    });
+-    }
++    // picodroid: no system_server — app ops start-data-delivery check and mode watching removed
+ 
+     mCameraStreaming = true;
+ 
+@@ -4587,17 +4505,8 @@ status_t CameraService::BasicClient::finishCameraStreamingOps() {
+     ALOGI("Stop camera streaming for %s (PID %d, UID %d)",
+         getPackageName().c_str(), getClientCallingPid(), getClientUid());
+ 
+-    if (mAppOpsManager != nullptr) {
+-        ALOGV("%s: finishDataDelivery for uid %d", __FUNCTION__, getClientUid());
+-        finishDataDelivery(mClientAttribution);
+-
+-        // Stop watching app op changes after stop streaming
+-        if (mOpsCallback != nullptr) {
+-            mAppOpsManager->stopWatchingMode(mOpsCallback);
+-            mOpsCallback.clear();
+-        }
+-        mCameraStreaming = false;
+-    }
++    // picodroid: no system_server — app ops finish-data-delivery and mode unwatch removed
++    mCameraStreaming = false;
+ 
+     return OK;
+ }
+@@ -4641,91 +4550,14 @@ status_t CameraService::BasicClient::notifyCameraClosing() {
+     return OK;
+ }
+ 
+-int32_t CameraService::getUidProcessState(int32_t uid) {
+-    const auto& activityManager = getActivityManager();
+-    int32_t procState = ActivityManager::PROCESS_STATE_NONEXISTENT;
+-    if (activityManager != nullptr) {
+-        procState = activityManager->getUidProcessState(uid, toString16(kServiceName));
+-    } else {
+-        ALOGE("%s: getActivityManager returned nullptr.", __FUNCTION__);
+-    }
+-    return procState;
++int32_t CameraService::getUidProcessState(int32_t /*uid*/) {
++    // picodroid: no system_server — no ActivityManager, every uid is reported as TOP
++    return ActivityManager::PROCESS_STATE_TOP;
+ }
+ 
+-void CameraService::BasicClient::opChanged(int32_t op, const String16&) {
++void CameraService::BasicClient::opChanged(int32_t /*op*/, const String16&) {
+     ATRACE_CALL();
+-    if (mAppOpsManager == nullptr) {
+-        return;
+-    }
+-    // TODO : add offline camera session case
+-    if (op != AppOpsManager::OP_CAMERA) {
+-        ALOGW("Unexpected app ops notification received: %d", op);
+-        return;
+-    }
+-
+-    PermissionChecker::PermissionResult res;
+-    int32_t appOpMode = AppOpsManager::MODE_ALLOWED;
+-    std::for_each(AttrSourceItr{mClientAttribution}, AttrSourceItr::end(),
+-            [&](const auto& attr) {
+-                appOpMode = std::max(appOpMode, mAppOpsManager->checkOp(
+-                        AppOpsManager::OP_CAMERA, attr.uid,
+-                        toString16(attr.packageName.value_or(""))));
+-            });
+-    res = appOpModeToPermissionResult(appOpMode);
+-    ALOGV("checkOp returns: %d, %s ", appOpMode,
+-            appOpMode == AppOpsManager::MODE_ALLOWED   ? "ALLOWED"
+-            : appOpMode == AppOpsManager::MODE_IGNORED ? "IGNORED"
+-            : appOpMode == AppOpsManager::MODE_ERRORED ? "ERRORED"
+-                                                        : "UNKNOWN");
+-
+-    if (res == PermissionChecker::PERMISSION_HARD_DENIED) {
+-        ALOGI("Camera %s: Access for \"%s\" revoked", mCameraIdStr.c_str(),
+-              getPackageName().c_str());
+-        block();
+-    } else if (res == PermissionChecker::PERMISSION_SOFT_DENIED) {
+-        bool isUidActive =
+-                sCameraService->mUidPolicy->isUidActive(getClientUid(), getPackageName());
+-
+-        // Uid may be active, but not visible to the user (e.g. PROCESS_STATE_FOREGROUND_SERVICE).
+-        // If not visible, but still active, then we want to block instead of muting the camera.
+-        int32_t procState = ActivityManager::PROCESS_STATE_NONEXISTENT;
+-
+-        // Use the proc state of the last uid in the chain (ultimately receiving the data)
+-        // when determining whether to mute or block
+-        int32_t uid = -1;
+-        std::for_each(AttrSourceItr{mClientAttribution}, AttrSourceItr::end(),
+-                    [&](const auto& attr) {
+-                        uid = static_cast<uid_t>(attr.uid);
+-                    });
+-        procState = getUidProcessState(uid);
+-        bool isUidVisible = (procState <= ActivityManager::PROCESS_STATE_BOUND_TOP);
+-
+-        bool isCameraPrivacyEnabled;
+-        if (flags::camera_privacy_allowlist()) {
+-            isCameraPrivacyEnabled = sCameraService->isCameraPrivacyEnabled(
+-                    toString16(getPackageName()), std::string(), mCallingPid, getClientUid());
+-        } else {
+-            isCameraPrivacyEnabled =
+-                sCameraService->mSensorPrivacyPolicy->isCameraPrivacyEnabled();
+-        }
+-
+-        ALOGI("Camera %s: Access for \"%s\" has been restricted, isUidTrusted %d, isUidActive %d"
+-              " isUidVisible %d, isCameraPrivacyEnabled %d procState %d",
+-              mCameraIdStr.c_str(), getPackageName().c_str(), mUidIsTrusted, isUidActive,
+-              isUidVisible, isCameraPrivacyEnabled, procState);
+-        // If the calling Uid is trusted (a native service), or the client Uid is active / visible
+-        // (WAR for b/175320666)the AppOpsManager could return MODE_IGNORED. Do not treat such
+-        // cases as error.
+-        if (!mUidIsTrusted) {
+-            if (isUidVisible && isCameraPrivacyEnabled && supportsCameraMute()) {
+-                setCameraMute(true);
+-            } else {
+-                block();
+-            }
+-        }
+-    } else if (res == PermissionChecker::PERMISSION_GRANTED) {
+-        setCameraMute(sCameraService->mOverrideCameraMuteMode);
+-    }
++    // picodroid: no system_server — app ops change callbacks never arrive, nothing to do
+ }
+ 
+ void CameraService::BasicClient::block() {
+@@ -4800,55 +4632,19 @@ binder::Status CameraService::Client::OpsCallback::opChanged(int32_t op, int32_t
+ //                  UidPolicy
+ // ----------------------------------------------------------------------------
+ 
+-void CameraService::UidPolicy::registerWithActivityManager() {
+-    Mutex::Autolock _l(mUidLock);
+-    int32_t emptyUidArray[] = { };
+-
+-    if (mRegistered) return;
+-    status_t res = mAm.linkToDeath(this);
+-    mAm.registerUidObserverForUids(this, ActivityManager::UID_OBSERVER_GONE
+-            | ActivityManager::UID_OBSERVER_IDLE
+-            | ActivityManager::UID_OBSERVER_ACTIVE | ActivityManager::UID_OBSERVER_PROCSTATE
+-            | ActivityManager::UID_OBSERVER_PROC_OOM_ADJ,
+-            ActivityManager::PROCESS_STATE_UNKNOWN,
+-            toString16(kServiceName), emptyUidArray, 0, mObserverToken);
+-    if (res == OK) {
+-        mRegistered = true;
+-        ALOGV("UidPolicy: Registered with ActivityManager");
+-    } else {
+-        ALOGE("UidPolicy: Failed to register with ActivityManager: 0x%08x", res);
+-    }
+-}
+-
+-void CameraService::UidPolicy::onServiceRegistration(const String16& name, const sp<IBinder>&) {
+-    if (name != toString16(kActivityServiceName)) {
+-        return;
+-    }
++// picodroid: no system_server — registration with ActivityManager removed
+ 
+-    registerWithActivityManager();
++void CameraService::UidPolicy::onServiceRegistration(const String16& /*name*/,
++        const sp<IBinder>&) {
++    // picodroid: no system_server — "activity" never registers, nothing to do
+ }
+ 
+ void CameraService::UidPolicy::registerSelf() {
+-    // Use check service to see if the activity service is available
+-    // If not available then register for notifications, instead of blocking
+-    // till the service is ready
+-    sp<IServiceManager> sm = defaultServiceManager();
+-    sp<IBinder> binder = sm->checkService(toString16(kActivityServiceName));
+-    if (!binder) {
+-        sm->registerForNotifications(toString16(kActivityServiceName), this);
+-    } else {
+-        registerWithActivityManager();
+-    }
++    // picodroid: no system_server — never register with ActivityManager
+ }
+ 
+ void CameraService::UidPolicy::unregisterSelf() {
+-    Mutex::Autolock _l(mUidLock);
+-
+-    mAm.unregisterUidObserver(this);
+-    mAm.unlinkToDeath(this);
+-    mRegistered = false;
+-    mActiveUids.clear();
+-    ALOGV("UidPolicy: Unregistered with ActivityManager");
++    // picodroid: no system_server — never registered with ActivityManager
+ }
+ 
+ void CameraService::UidPolicy::onUidGone(uid_t uid, bool disabled) {
+@@ -4977,11 +4773,8 @@ void CameraService::UidPolicy::registerMonitorUid(uid_t uid, bool openCamera) {
+         monitoredUid.procState = ActivityManager::PROCESS_STATE_NONEXISTENT;
+         monitoredUid.procAdj = resource_policy::UNKNOWN_ADJ;
+         monitoredUid.refCount = 1;
++        // picodroid: no system_server — no uid observer to add this uid to
+         it = mMonitoredUids.emplace(std::pair<uid_t, MonitoredUid>(uid, monitoredUid)).first;
+-        status_t res = mAm.addUidToObserver(mObserverToken, toString16(kServiceName), uid);
+-        if (res != OK) {
+-            ALOGE("UidPolicy: Failed to add uid to observer: 0x%08x", res);
+-        }
+     }
+ 
+     if (openCamera) {
+@@ -4998,11 +4791,8 @@ void CameraService::UidPolicy::unregisterMonitorUid(uid_t uid, bool closeCamera)
+     if (it != mMonitoredUids.end()) {
+         it->second.refCount--;
+         if (it->second.refCount == 0) {
++            // picodroid: no system_server — no uid observer to remove this uid from
+             mMonitoredUids.erase(it);
+-            status_t res = mAm.removeUidFromObserver(mObserverToken, toString16(kServiceName), uid);
+-            if (res != OK) {
+-                ALOGE("UidPolicy: Failed to remove uid from observer: 0x%08x", res);
+-            }
+         } else if (closeCamera) {
+             it->second.hasCamera = false;
+         }
+@@ -5016,63 +4806,10 @@ bool CameraService::UidPolicy::isUidActive(uid_t uid, const std::string &calling
+     return isUidActiveLocked(uid, callingPackage);
+ }
+ 
+-static const int64_t kPollUidActiveTimeoutTotalMillis = 300;
+-static const int64_t kPollUidActiveTimeoutMillis = 50;
+-
+-bool CameraService::UidPolicy::isUidActiveLocked(uid_t uid, const std::string &callingPackage) {
+-    // Non-app UIDs are considered always active
+-    // If activity manager is unreachable, assume everything is active
+-    if (uid < FIRST_APPLICATION_UID || !mRegistered) {
+-        return true;
+-    }
+-    auto it = mOverrideUids.find(uid);
+-    if (it != mOverrideUids.end()) {
+-        return it->second;
+-    }
+-    bool active = mActiveUids.find(uid) != mActiveUids.end();
+-    if (!active) {
+-        // We want active UIDs to always access camera with their first attempt since
+-        // there is no guarantee the app is robustly written and would retry getting
+-        // the camera on failure. The inverse case is not a problem as we would take
+-        // camera away soon once we get the callback that the uid is no longer active.
+-        ActivityManager am;
+-        // Okay to access with a lock held as UID changes are dispatched without
+-        // a lock and we are a higher level component.
+-        int64_t startTimeMillis = 0;
+-        do {
+-            // TODO: Fix this b/109950150!
+-            // Okay this is a hack. There is a race between the UID turning active and
+-            // activity being resumed. The proper fix is very risky, so we temporary add
+-            // some polling which should happen pretty rarely anyway as the race is hard
+-            // to hit.
+-            active = mActiveUids.find(uid) != mActiveUids.end();
+-            if (!active) {
+-                active = am.isUidActive(uid, toString16(callingPackage));
+-            }
+-            if (active) {
+-                break;
+-            }
+-            if (startTimeMillis <= 0) {
+-                startTimeMillis = uptimeMillis();
+-            }
+-            int64_t ellapsedTimeMillis = uptimeMillis() - startTimeMillis;
+-            int64_t remainingTimeMillis = kPollUidActiveTimeoutTotalMillis - ellapsedTimeMillis;
+-            if (remainingTimeMillis <= 0) {
+-                break;
+-            }
+-            remainingTimeMillis = std::min(kPollUidActiveTimeoutMillis, remainingTimeMillis);
+-
+-            mUidLock.unlock();
+-            usleep(remainingTimeMillis * 1000);
+-            mUidLock.lock();
+-        } while (true);
+-
+-        if (active) {
+-            // Now that we found out the UID is actually active, cache that
+-            mActiveUids.insert(uid);
+-        }
+-    }
+-    return active;
++bool CameraService::UidPolicy::isUidActiveLocked(uid_t /*uid*/,
++        const std::string & /*callingPackage*/) {
++    // picodroid: no system_server — no ActivityManager uid state, all uids are always active
++    return true;
+ }
+ 
+ int32_t CameraService::UidPolicy::getProcState(uid_t uid) {
+@@ -5080,12 +4817,9 @@ int32_t CameraService::UidPolicy::getProcState(uid_t uid) {
+     return getProcStateLocked(uid);
+ }
+ 
+-int32_t CameraService::UidPolicy::getProcStateLocked(uid_t uid) {
+-    int32_t procState = ActivityManager::PROCESS_STATE_UNKNOWN;
+-    if (mMonitoredUids.find(uid) != mMonitoredUids.end()) {
+-        procState = mMonitoredUids[uid].procState;
+-    }
+-    return procState;
++int32_t CameraService::UidPolicy::getProcStateLocked(uid_t /*uid*/) {
++    // picodroid: no system_server — no ActivityManager proc state, always report TOP
++    return ActivityManager::PROCESS_STATE_TOP;
+ }
+ 
+ void CameraService::UidPolicy::addOverrideUid(uid_t uid,
+@@ -5143,92 +4877,39 @@ void CameraService::UidPolicy::updateOverrideUid(uid_t uid, const std::string &c
+ //                  SensorPrivacyPolicy
+ // ----------------------------------------------------------------------------
+ 
+-void CameraService::SensorPrivacyPolicy::registerWithSensorPrivacyManager()
+-{
+-    Mutex::Autolock _l(mSensorPrivacyLock);
+-    if (mRegistered) {
+-        return;
+-    }
+-    hasCameraPrivacyFeature(); // Called so the result is cached
+-    mSpm.addSensorPrivacyListener(this);
+-    if (isAutomotiveDevice()) {
+-        mSpm.addToggleSensorPrivacyListener(this);
+-    }
+-    mSensorPrivacyEnabled = mSpm.isSensorPrivacyEnabled();
+-    if (flags::camera_privacy_allowlist()) {
+-        mCameraPrivacyState = mSpm.getToggleSensorPrivacyState(
+-                SensorPrivacyManager::TOGGLE_TYPE_SOFTWARE,
+-                SensorPrivacyManager::TOGGLE_SENSOR_CAMERA);
+-    }
+-    status_t res = mSpm.linkToDeath(this);
+-    if (res == OK) {
+-        mRegistered = true;
+-        ALOGV("SensorPrivacyPolicy: Registered with SensorPrivacyManager");
+-    }
+-}
++// picodroid: no system_server — registration with SensorPrivacyManager removed
+ 
+-void CameraService::SensorPrivacyPolicy::onServiceRegistration(const String16& name,
++void CameraService::SensorPrivacyPolicy::onServiceRegistration(const String16& /*name*/,
+                                                                const sp<IBinder>&) {
+-    if (name != toString16(kSensorPrivacyServiceName)) {
+-        return;
+-    }
+-
+-    registerWithSensorPrivacyManager();
++    // picodroid: no system_server — "sensor_privacy" never registers, nothing to do
+ }
+ 
+ void CameraService::SensorPrivacyPolicy::registerSelf() {
+-    // Use checkservice to see if the sensor_privacy service is available
+-    // If service is not available then register for notification
+-    sp<IServiceManager> sm = defaultServiceManager();
+-    sp<IBinder> binder = sm->checkService(toString16(kSensorPrivacyServiceName));
+-    if (!binder) {
+-        sm->registerForNotifications(toString16(kSensorPrivacyServiceName),this);
+-    } else {
+-        registerWithSensorPrivacyManager();
+-    }
++    // picodroid: no system_server — never register with SensorPrivacyManager
+ }
+ 
+ void CameraService::SensorPrivacyPolicy::unregisterSelf() {
+-    Mutex::Autolock _l(mSensorPrivacyLock);
+-    mSpm.removeSensorPrivacyListener(this);
+-    if (isAutomotiveDevice()) {
+-        mSpm.removeToggleSensorPrivacyListener(this);
+-    }
+-    mSpm.unlinkToDeath(this);
+-    mRegistered = false;
+-    ALOGV("SensorPrivacyPolicy: Unregistered with SensorPrivacyManager");
++    // picodroid: no system_server — never registered with SensorPrivacyManager
+ }
+ 
+ bool CameraService::SensorPrivacyPolicy::isSensorPrivacyEnabled() {
+-    if (!mRegistered) {
+-      registerWithSensorPrivacyManager();
+-    }
+-
+-    Mutex::Autolock _l(mSensorPrivacyLock);
+-    return mSensorPrivacyEnabled;
++    // picodroid: no system_server — sensor privacy is never enabled
++    return false;
+ }
+ 
+ int CameraService::SensorPrivacyPolicy::getCameraPrivacyState() {
+-    if (!mRegistered) {
+-        registerWithSensorPrivacyManager();
+-    }
+-
+-    Mutex::Autolock _l(mSensorPrivacyLock);
+-    return mCameraPrivacyState;
++    // picodroid: no system_server — camera privacy is always disabled
++    return SensorPrivacyManager::DISABLED;
+ }
+ 
+ bool CameraService::SensorPrivacyPolicy::isCameraPrivacyEnabled() {
+-    if (!hasCameraPrivacyFeature()) {
+-        return false;
+-    }
+-    return mSpm.isToggleSensorPrivacyEnabled(SensorPrivacyManager::TOGGLE_SENSOR_CAMERA);
++    // picodroid: no system_server — camera privacy is never enabled
++    return false;
+ }
+ 
+-bool CameraService::SensorPrivacyPolicy::isCameraPrivacyEnabled(const String16& packageName) {
+-    if (!hasCameraPrivacyFeature()) {
+-        return false;
+-    }
+-    return mSpm.isCameraPrivacyEnabled(packageName);
++bool CameraService::SensorPrivacyPolicy::isCameraPrivacyEnabled(const String16& /*packageName*/) {
++    // picodroid: no system_server — camera privacy is never enabled
++    return false;
+ }
+ 
+ binder::Status CameraService::SensorPrivacyPolicy::onSensorPrivacyChanged(
+@@ -5274,17 +4955,7 @@ binder::Status CameraService::SensorPrivacyPolicy::onSensorPrivacyStateChanged(
+ }
+ 
+ void CameraService::SensorPrivacyPolicy::binderDied(const wp<IBinder>& /*who*/) {
+-    Mutex::Autolock _l(mSensorPrivacyLock);
+-    ALOGV("SensorPrivacyPolicy: SensorPrivacyManager has died");
+-    mRegistered = false;
+-}
+-
+-bool CameraService::SensorPrivacyPolicy::hasCameraPrivacyFeature() {
+-    bool supportsSoftwareToggle = mSpm.supportsSensorToggle(
+-            SensorPrivacyManager::TOGGLE_TYPE_SOFTWARE, SensorPrivacyManager::TOGGLE_SENSOR_CAMERA);
+-    bool supportsHardwareToggle = mSpm.supportsSensorToggle(
+-            SensorPrivacyManager::TOGGLE_TYPE_HARDWARE, SensorPrivacyManager::TOGGLE_SENSOR_CAMERA);
+-    return supportsSoftwareToggle || supportsHardwareToggle;
++    // picodroid: no system_server — SensorPrivacyManager never dies, nothing to do
+ }
+ 
+ // ----------------------------------------------------------------------------
+@@ -6969,7 +6640,7 @@ ICameraDeviceUser::AudioRestriction CameraService::updateAudioRestrictionLocked(
+     bool modeChanged = (mAudioRestriction != mode);
+     mAudioRestriction = mode;
+     if (modeChanged) {
+-        mAppOps.setCameraAudioRestriction(static_cast<int32_t>(mode));
++        // picodroid: no system_server — appops camera audio restriction push removed
+         if (lights_flags::enable_light_animations()) {
+             mCameraServiceProxyWrapper->notifyCameraDistractionRestriction(mode);
+         }
+diff --git a/services/camera/libcameraservice/CameraService.h b/services/camera/libcameraservice/CameraService.h
+index 59f0a4d..cfc394c 100644
+--- a/services/camera/libcameraservice/CameraService.h
++++ b/services/camera/libcameraservice/CameraService.h
+@@ -28,7 +28,7 @@
+ #include <binder/ActivityManager.h>
+ #include <binder/AppOpsManager.h>
+ #include <binder/BinderService.h>
+-#include <binder/IActivityManager.h>
++// picodroid: no system_server — IActivityManager ("activity") never exists, interface unused
+ #include <binder/IServiceManager.h>
+ #include <binder/IUidObserver.h>
+ #include <cutils/multiuser.h>
+@@ -707,17 +707,7 @@ private:
+ 
+     // TODO: b/263304156 update this to make use of a death callback for more
+     // robust/fault tolerant logging
+-    static const sp<IActivityManager>& getActivityManager() {
+-        static const char* kActivityService = "activity";
+-        static const auto activityManager = []() -> sp<IActivityManager> {
+-            const sp<IServiceManager> sm(defaultServiceManager());
+-            if (sm != nullptr) {
+-                 return interface_cast<IActivityManager>(sm->checkService(String16(kActivityService)));
+-            }
+-            return nullptr;
+-        }();
+-        return activityManager;
+-    }
++    // picodroid: no system_server — getActivityManager() removed, IActivityManager never exists
+ 
+     static int32_t getUidProcessState(int32_t uid);
+ 
+@@ -888,7 +878,7 @@ private:
+         int32_t getProcStateLocked(uid_t uid);
+         void updateOverrideUid(uid_t uid, const std::string &callingPackage, bool active,
+                 bool insert);
+-        void registerWithActivityManager();
++        // picodroid: no system_server — registerWithActivityManager() removed
+ 
+         struct MonitoredUid {
+             int32_t procState;
+@@ -902,13 +892,12 @@ private:
+ 
+         Mutex mUidLock;
+         bool mRegistered;
+-        ActivityManager mAm;
++        // picodroid: no system_server — ActivityManager handle and observer token removed
+         wp<CameraService> mService;
+         std::unordered_set<uid_t> mActiveUids;
+         // Monitored uid map
+         std::unordered_map<uid_t, MonitoredUid> mMonitoredUids;
+         std::unordered_map<uid_t, bool> mOverrideUids;
+-        sp<IBinder> mObserverToken;
+     }; // class UidPolicy
+ 
+     // If sensor privacy is enabled then all apps, including those that are active, should be
+@@ -944,15 +933,13 @@ private:
+             virtual void binderDied(const wp<IBinder> &who);
+ 
+         private:
+-            SensorPrivacyManager mSpm;
++            // picodroid: no system_server — SensorPrivacyManager handle and its registration
++            // helpers removed, sensor privacy is never enabled
+             wp<CameraService> mService;
+             Mutex mSensorPrivacyLock;
+             bool mSensorPrivacyEnabled;
+             int mCameraPrivacyState;
+             bool mRegistered;
+-
+-            bool hasCameraPrivacyFeature();
+-            void registerWithSensorPrivacyManager();
+     };
+ 
+     sp<UidPolicy> mUidPolicy;
+@@ -1577,7 +1564,7 @@ private:
+ 
+     // TODO: right now each BasicClient holds one AppOpsManager instance.
+     // We can refactor the code so all of clients share this instance
+-    AppOpsManager mAppOps;
++    // picodroid: no system_server — AppOpsManager member removed, appops never exists
+ 
+     // Aggreated audio restriction mode for all camera clients
+     hardware::camera2::ICameraDeviceUser::AudioRestriction mAudioRestriction;
+diff --git a/services/camera/libcameraservice/api2/CameraDeviceClient.cpp b/services/camera/libcameraservice/api2/CameraDeviceClient.cpp
+index 7be7e68..2cc0f3c 100644
+--- a/services/camera/libcameraservice/api2/CameraDeviceClient.cpp
++++ b/services/camera/libcameraservice/api2/CameraDeviceClient.cpp
+@@ -3085,14 +3085,7 @@ bool CameraDeviceClient::enforceRequestPermissions(CameraMetadata& metadata) {
+      */
+     entry = metadata.find(ANDROID_LED_TRANSMIT);
+     if (entry.count > 0 && entry.data.u8[0] != ANDROID_LED_TRANSMIT_ON) {
+-        String16 permissionString =
+-            toString16("android.permission.CAMERA_DISABLE_TRANSMIT_LED");
+-        if (!checkCallingPermission(permissionString)) {
+-            const int uid = getCallingUid();
+-            ALOGE("Permission Denial: "
+-                  "can't disable transmit LED pid=%d, uid=%d", pid, uid);
+-            return false;
+-        }
++        // picodroid: no system_server — permission service checks always granted
+     }
+ 
+     return true;
+diff --git a/services/camera/libcameraservice/api2/CameraOfflineSessionClient.cpp b/services/camera/libcameraservice/api2/CameraOfflineSessionClient.cpp
+index e6f4862..e0dcd55 100644
+--- a/services/camera/libcameraservice/api2/CameraOfflineSessionClient.cpp
++++ b/services/camera/libcameraservice/api2/CameraOfflineSessionClient.cpp
+@@ -237,33 +237,7 @@ status_t CameraOfflineSessionClient::notifyCameraOpening() {
+               getPackageName().c_str(), getClientUid());
+     }
+ 
+-    if (mAppOpsManager != nullptr) {
+-        // Notify app ops that the camera is not available
+-        mOpsCallback = new OpsCallback(this);
+-        int32_t res;
+-        // TODO : possibly change this to OP_OFFLINE_CAMERA_SESSION
+-        mAppOpsManager->startWatchingMode(AppOpsManager::OP_CAMERA, toString16(getPackageName()),
+-                                          mOpsCallback);
+-        // TODO : possibly change this to OP_OFFLINE_CAMERA_SESSION
+-        res = mAppOpsManager->startOpNoThrow(AppOpsManager::OP_CAMERA, getClientUid(),
+-                                             toString16(getPackageName()),
+-                                             /*startIfModeDefault*/ false);
+-
+-        if (res == AppOpsManager::MODE_ERRORED) {
+-            ALOGI("Offline Camera %s: Access for \"%s\" has been revoked", mCameraIdStr.c_str(),
+-                  getPackageName().c_str());
+-            return PERMISSION_DENIED;
+-        }
+-
+-        // If the calling Uid is trusted (a native service), the AppOpsManager could
+-        // return MODE_IGNORED. Do not treat such case as error.
+-        if (!mUidIsTrusted && res == AppOpsManager::MODE_IGNORED) {
+-            ALOGI("Offline Camera %s: Access for \"%s\" has been restricted", mCameraIdStr.c_str(),
+-                  getPackageName().c_str());
+-            // Return the same error as for device policy manager rejection
+-            return -EACCES;
+-        }
+-    }
++    // picodroid: no system_server — app ops start/watch for offline sessions removed
+ 
+     mCameraOpen = true;
+ 
+@@ -276,21 +250,8 @@ status_t CameraOfflineSessionClient::notifyCameraOpening() {
+ status_t CameraOfflineSessionClient::notifyCameraClosing() {
+     ATRACE_CALL();
+ 
+-    // Check if notifyCameraOpening succeeded, and if so, finish the camera op if necessary
+-    if (mCameraOpen) {
+-        // Notify app ops that the camera is available again
+-        if (mAppOpsManager != nullptr) {
+-            // TODO : possibly change this to OP_OFFLINE_CAMERA_SESSION
+-            mAppOpsManager->finishOp(AppOpsManager::OP_CAMERA, getClientUid(),
+-                                     toString16(getPackageName()));
+-            mCameraOpen = false;
+-        }
+-    }
+-    // Always stop watching, even if no camera op is active
+-    if (mOpsCallback != nullptr && mAppOpsManager != nullptr) {
+-        mAppOpsManager->stopWatchingMode(mOpsCallback);
+-    }
+-    mOpsCallback.clear();
++    // picodroid: no system_server — app ops finish/unwatch for offline sessions removed
++    mCameraOpen = false;
+ 
+     sCameraService->mUidPolicy->unregisterMonitorUid(getClientUid(), /*closeCamera*/ true);
+ 
+diff --git a/services/camera/libcameraservice/utils/AttributionAndPermissionUtils.cpp b/services/camera/libcameraservice/utils/AttributionAndPermissionUtils.cpp
+index 319c41f..654da86 100644
+--- a/services/camera/libcameraservice/utils/AttributionAndPermissionUtils.cpp
++++ b/services/camera/libcameraservice/utils/AttributionAndPermissionUtils.cpp
+@@ -20,7 +20,7 @@
+ #include "AttributionAndPermissionUtils.h"
+ 
+ #include <binder/AppOpsManager.h>
+-#include <binder/PermissionController.h>
++// picodroid: no system_server — PermissionController ("permission" service) unused
+ #include <com_android_internal_camera_flags.h>
+ #include <cutils/properties.h>
+ #include <private/android_filesystem_config.h>
+@@ -35,26 +35,7 @@ namespace {
+ 
+ using android::content::AttributionSourceState;
+ 
+-static std::string getAttributionString(const AttributionSourceState& attributionSource) {
+-    std::ostringstream ret;
+-    const AttributionSourceState* current = &attributionSource;
+-    while (current != nullptr) {
+-        if (current != &attributionSource) {
+-            ret << ", ";
+-        }
+-
+-        ret << "[uid " << current->uid << ", pid " << current->pid;
+-        ret << ", packageName \"" << current->packageName.value_or("<unknown>");
+-        ret << "\"]";
+-
+-        if (!current->next.empty()) {
+-            current = &current->next[0];
+-        } else {
+-            current = nullptr;
+-        }
+-    }
+-    return ret.str();
+-}
++// picodroid: no system_server — attribution logging helper removed with permission checks
+ 
+ static std::string getAppOpsMessage(const std::string& cameraId) {
+     return cameraId.empty() ? std::string() : std::string("start camera ") + cameraId;
+@@ -137,43 +118,13 @@ binder::Status AttributionAndPermissionUtils::resolveAttributionSource(
+ }
+ 
+ PermissionChecker::PermissionResult AttributionAndPermissionUtils::checkPermission(
+-        const std::string& cameraId, const std::string& permission,
+-        const AttributionSourceState& attributionSource, const std::string& message,
+-        int32_t attributedOpCode, bool forDataDelivery, bool startDataDelivery,
+-        bool checkAutomotive) {
+-    if (checkAutomotive && checkAutomotivePrivilegedClient(cameraId, attributionSource)) {
+-        return PermissionChecker::PERMISSION_GRANTED;
+-    }
+-
+-    PermissionChecker::PermissionResult result;
+-    if (forDataDelivery) {
+-        if (startDataDelivery) {
+-            result = mPermissionChecker->checkPermissionForStartDataDeliveryFromDatasource(
+-                    toString16(permission), attributionSource, toString16(message),
+-                    attributedOpCode);
+-        } else {
+-            result = mPermissionChecker->checkPermissionForDataDeliveryFromDatasource(
+-                    toString16(permission), attributionSource, toString16(message),
+-                    attributedOpCode);
+-        }
+-    } else {
+-        result = mPermissionChecker->checkPermissionForPreflight(
+-                toString16(permission), attributionSource, toString16(message), attributedOpCode);
+-    }
+-
+-    if (result == PermissionChecker::PERMISSION_HARD_DENIED) {
+-        ALOGV("%s (forDataDelivery %d startDataDelivery %d): %s permission hard denied "
+-              "for client attribution %s",
+-              __FUNCTION__, forDataDelivery, startDataDelivery, permission.c_str(),
+-              getAttributionString(attributionSource).c_str());
+-    } else if (result == PermissionChecker::PERMISSION_SOFT_DENIED) {
+-        ALOGV("%s checkPermission (forDataDelivery %d startDataDelivery %d): %s permission soft "
+-              "denied "
+-              "for client attribution %s",
+-              __FUNCTION__, forDataDelivery, startDataDelivery, permission.c_str(),
+-              getAttributionString(attributionSource).c_str());
+-    }
+-    return result;
++        const std::string& cameraId __unused, const std::string& permission __unused,
++        const AttributionSourceState& attributionSource __unused,
++        const std::string& message __unused, int32_t attributedOpCode __unused,
++        bool forDataDelivery __unused, bool startDataDelivery __unused,
++        bool checkAutomotive __unused) {
++    // picodroid: no system_server — AppOps/PermissionController never exist, always grant
++    return PermissionChecker::PERMISSION_GRANTED;
+ }
+ 
+ bool AttributionAndPermissionUtils::checkPermissionForPreflight(
+@@ -243,51 +194,19 @@ bool AttributionAndPermissionUtils::isAutomotivePrivilegedClient(int32_t uid) {
+     return uid == AID_AUTOMOTIVE_EVS;
+ }
+ 
+-std::string AttributionAndPermissionUtils::getPackageNameFromUid(int clientUid) const {
+-    std::string packageName("");
+-
+-    sp<IPermissionController> permCtrl = getPermissionController();
+-    if (permCtrl == nullptr) {
+-        // Return empty package name and the further interaction
+-        // with camera will likely fail
+-        return packageName;
+-    }
+-
+-    Vector<String16> packages;
+-
+-    permCtrl->getPackagesForUid(clientUid, packages);
+-
+-    if (packages.isEmpty()) {
+-        ALOGE("No packages for calling UID %d", clientUid);
+-        // Return empty package name and the further interaction
+-        // with camera will likely fail
+-        return packageName;
+-    }
+-
+-    // Arbitrarily pick the first name in the list
+-    packageName = toStdString(packages[0]);
+-
+-    return packageName;
++std::string AttributionAndPermissionUtils::getPackageNameFromUid(int /*clientUid*/) const {
++    // picodroid: no system_server — no PermissionController/package manager, no package names
++    return std::string();
+ }
+ 
+-status_t AttributionAndPermissionUtils::getUidForPackage(const std::string& packageName, int userId,
+-                                                         /*inout*/ uid_t& uid, int err) {
+-    PermissionController pc;
+-    uid = pc.getPackageUid(toString16(packageName), 0);
+-    if (uid <= 0) {
+-        ALOGE("Unknown package: '%s'", packageName.c_str());
+-        dprintf(err, "Unknown package: '%s'\n", packageName.c_str());
+-        return BAD_VALUE;
+-    }
+-
+-    if (userId < 0) {
+-        ALOGE("Invalid user: %d", userId);
+-        dprintf(err, "Invalid user: %d\n", userId);
+-        return BAD_VALUE;
+-    }
+-
+-    uid = multiuser_get_uid(userId, uid);
+-    return NO_ERROR;
++status_t AttributionAndPermissionUtils::getUidForPackage(const std::string& packageName,
++                                                         int userId __unused,
++                                                         /*inout*/ uid_t& uid __unused,
++                                                         int err) {
++    // picodroid: no system_server — no package manager, package lookup always fails
++    ALOGE("Unknown package: '%s'", packageName.c_str());
++    dprintf(err, "Unknown package: '%s'\n", packageName.c_str());
++    return BAD_VALUE;
+ }
+ 
+ bool AttributionAndPermissionUtils::isCallerCameraServerNotDelegating() {
+@@ -365,9 +284,8 @@ bool AttributionAndPermissionUtils::hasPermissionsForCameraWarmUp(
+ }
+ 
+ void AttributionAndPermissionUtils::finishDataDelivery(
+-        const AttributionSourceState& attributionSource) {
+-    mPermissionChecker->finishDataDeliveryFromDatasource(AppOpsManager::OP_CAMERA,
+-                                                         attributionSource);
++        const AttributionSourceState& /*attributionSource*/) {
++    // picodroid: no system_server — app ops data delivery bookkeeping removed
+ }
+ 
+ bool AttributionAndPermissionUtils::checkAutomotivePrivilegedClient(
+@@ -454,23 +372,6 @@ binder::Status AttributionAndPermissionUtils::errorNotTrusted(
+                             clientName.c_str(), clientPid, clientUid);
+ }
+ 
+-const sp<IPermissionController>& AttributionAndPermissionUtils::getPermissionController() const {
+-    static const char* kPermissionControllerService = "permission";
+-    static thread_local sp<IPermissionController> sPermissionController = nullptr;
+-
+-    if (sPermissionController == nullptr ||
+-        !IInterface::asBinder(sPermissionController)->isBinderAlive()) {
+-        sp<IServiceManager> sm = defaultServiceManager();
+-        sp<IBinder> binder = sm->checkService(toString16(kPermissionControllerService));
+-        if (binder == nullptr) {
+-            ALOGE("%s: Could not get permission service", __FUNCTION__);
+-            sPermissionController = nullptr;
+-        } else {
+-            sPermissionController = interface_cast<IPermissionController>(binder);
+-        }
+-    }
+-
+-    return sPermissionController;
+-}
++// picodroid: no system_server — getPermissionController() ("permission" service) removed
+ 
+ } // namespace android
+diff --git a/services/camera/libcameraservice/utils/AttributionAndPermissionUtils.h b/services/camera/libcameraservice/utils/AttributionAndPermissionUtils.h
+index d639c5e..376f419 100644
+--- a/services/camera/libcameraservice/utils/AttributionAndPermissionUtils.h
++++ b/services/camera/libcameraservice/utils/AttributionAndPermissionUtils.h
+@@ -18,8 +18,8 @@
+ 
+ #include <android/content/AttributionSourceState.h>
+ #include <android/permission/PermissionChecker.h>
++// picodroid: no system_server — IPermissionController ("permission" service) unused
+ #include <binder/BinderService.h>
+-#include <binder/IPermissionController.h>
+ #include <private/android_filesystem_config.h>
+ 
+ namespace android {
+@@ -205,7 +205,7 @@ class AttributionAndPermissionUtils {
+                                            const std::string& clientName, bool isPid) const;
+ 
+   private:
+-    virtual const sp<IPermissionController>& getPermissionController() const;
++    // picodroid: no system_server — getPermissionController() removed
+ 
+     virtual PermissionChecker::PermissionResult checkPermission(
+             const std::string& cameraId, const std::string& permission,
+diff --git a/services/camera/libcameraservice/utils/CameraServiceProxyWrapper.cpp b/services/camera/libcameraservice/utils/CameraServiceProxyWrapper.cpp
+index f4ee496..0efb3e5 100644
+--- a/services/camera/libcameraservice/utils/CameraServiceProxyWrapper.cpp
++++ b/services/camera/libcameraservice/utils/CameraServiceProxyWrapper.cpp
+@@ -343,7 +343,9 @@ void CameraServiceProxyWrapper::logFeatureCombinationInternal(
+ int CameraServiceProxyWrapper::getRotateAndCropOverride(const std::string &packageName,
+         int lensFacing, int userId) {
+     sp<ICameraServiceProxy> proxyBinder = getCameraServiceProxy();
+-    if (proxyBinder == nullptr) return true;
++    // picodroid: no system_server — camera proxy never exists, no rotate-and-crop override
++    // (0 == ANDROID_SCALER_ROTATE_AND_CROP_NONE)
++    if (proxyBinder == nullptr) return 0;
+     int ret = 0;
+     auto status = proxyBinder->getRotateAndCropOverride(packageName, lensFacing,
+             userId, &ret);
+@@ -503,7 +505,8 @@ void CameraServiceProxyWrapper::logClose(const std::string& id, int32_t latencyM
+ 
+ bool CameraServiceProxyWrapper::isCameraDisabled(int userId) {
+     sp<ICameraServiceProxy> proxyBinder = getCameraServiceProxy();
+-    if (proxyBinder == nullptr) return true;
++    // picodroid: no system_server — camera proxy never exists, camera is never policy-disabled
++    if (proxyBinder == nullptr) return false;
+     bool ret = false;
+     auto status = proxyBinder->isCameraDisabled(userId, &ret);
+     if (!status.isOk()) {
+diff --git a/services/camera/libcameraservice/CameraService.h b/services/camera/libcameraservice/CameraService.h
+index 59f0a4d..93cc4c8 100644
+--- a/services/camera/libcameraservice/CameraService.h
++++ b/services/camera/libcameraservice/CameraService.h
+@@ -28,7 +28,7 @@
+ #include <binder/ActivityManager.h>
+ #include <binder/AppOpsManager.h>
+ #include <binder/BinderService.h>
+-#include <binder/IActivityManager.h>
++// picodroid: no system_server — IActivityManager ("activity") never exists, interface unused
+ #include <binder/IServiceManager.h>
+ #include <binder/IUidObserver.h>
+ #include <cutils/multiuser.h>
+@@ -707,17 +707,7 @@ private:
+ 
+     // TODO: b/263304156 update this to make use of a death callback for more
+     // robust/fault tolerant logging
+-    static const sp<IActivityManager>& getActivityManager() {
+-        static const char* kActivityService = "activity";
+-        static const auto activityManager = []() -> sp<IActivityManager> {
+-            const sp<IServiceManager> sm(defaultServiceManager());
+-            if (sm != nullptr) {
+-                 return interface_cast<IActivityManager>(sm->checkService(String16(kActivityService)));
+-            }
+-            return nullptr;
+-        }();
+-        return activityManager;
+-    }
++    // picodroid: no system_server — getActivityManager() removed, IActivityManager never exists
+ 
+     static int32_t getUidProcessState(int32_t uid);
+ 
+@@ -853,7 +843,7 @@ private:
+         public virtual IServiceManager::LocalRegistrationCallback {
+     public:
+         explicit UidPolicy(sp<CameraService> service)
+-                : mRegistered(false), mService(service) {}
++                : mService(service) {}
+ 
+         void registerSelf();
+         void unregisterSelf();
+@@ -888,7 +878,7 @@ private:
+         int32_t getProcStateLocked(uid_t uid);
+         void updateOverrideUid(uid_t uid, const std::string &callingPackage, bool active,
+                 bool insert);
+-        void registerWithActivityManager();
++        // picodroid: no system_server — registerWithActivityManager() removed
+ 
+         struct MonitoredUid {
+             int32_t procState;
+@@ -902,13 +892,12 @@ private:
+ 
+         Mutex mUidLock;
+         bool mRegistered;
+-        ActivityManager mAm;
++        // picodroid: no system_server — ActivityManager handle and observer token removed
+         wp<CameraService> mService;
+         std::unordered_set<uid_t> mActiveUids;
+         // Monitored uid map
+         std::unordered_map<uid_t, MonitoredUid> mMonitoredUids;
+         std::unordered_map<uid_t, bool> mOverrideUids;
+-        sp<IBinder> mObserverToken;
+     }; // class UidPolicy
+ 
+     // If sensor privacy is enabled then all apps, including those that are active, should be
+@@ -923,7 +912,7 @@ private:
+                     : AttributionAndPermissionUtilsEncapsulator(attributionAndPermissionUtils),
+                       mService(service),
+                       mSensorPrivacyEnabled(false),
+-                    mCameraPrivacyState(SensorPrivacyManager::DISABLED), mRegistered(false) {}
++                    mCameraPrivacyState(SensorPrivacyManager::DISABLED) {}
+ 
+             void registerSelf();
+             void unregisterSelf();
+@@ -944,15 +933,14 @@ private:
+             virtual void binderDied(const wp<IBinder> &who);
+ 
+         private:
+-            SensorPrivacyManager mSpm;
++            // picodroid: no system_server — SensorPrivacyManager handle and its registration
++            // helpers removed, sensor privacy is never enabled
+             wp<CameraService> mService;
+             Mutex mSensorPrivacyLock;
+             bool mSensorPrivacyEnabled;
+             int mCameraPrivacyState;
+-            bool mRegistered;
+-
+-            bool hasCameraPrivacyFeature();
+-            void registerWithSensorPrivacyManager();
++            // picodroid: no system_server — registration removed; field retained
++            // for layout stability is unnecessary, drop to satisfy -Wunused.
+     };
+ 
+     sp<UidPolicy> mUidPolicy;
+@@ -1577,7 +1565,7 @@ private:
+ 
+     // TODO: right now each BasicClient holds one AppOpsManager instance.
+     // We can refactor the code so all of clients share this instance
+-    AppOpsManager mAppOps;
++    // picodroid: no system_server — AppOpsManager member removed, appops never exists
+ 
+     // Aggreated audio restriction mode for all camera clients
+     hardware::camera2::ICameraDeviceUser::AudioRestriction mAudioRestriction;

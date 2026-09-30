@@ -1,0 +1,167 @@
+diff --git a/media/libmediaplayerservice/nuplayer/AWakeLock.cpp b/media/libmediaplayerservice/nuplayer/AWakeLock.cpp
+index e8556dd..fb2e3fd 100644
+--- a/media/libmediaplayerservice/nuplayer/AWakeLock.cpp
++++ b/media/libmediaplayerservice/nuplayer/AWakeLock.cpp
+@@ -47,17 +47,7 @@ AWakeLock::~AWakeLock() {
+ bool AWakeLock::acquire() {
+     if (mWakeLockCount == 0) {
+         CHECK(mWakeLockToken == NULL);
+-        if (mPowerManager == NULL) {
+-            // use checkService() to avoid blocking if power service is not up yet
+-            sp<IBinder> binder =
+-                defaultServiceManager()->checkService(String16("power"));
+-            if (binder == NULL) {
+-                ALOGW("could not get the power manager service");
+-            } else {
+-                mPowerManager = interface_cast<os::IPowerManager>(binder);
+-                binder->linkToDeath(mDeathRecipient);
+-            }
+-        }
++        // picodroid: no system_server — 'power' never exists, never attempt to acquire a wakelock.
+         if (mPowerManager != NULL) {
+             sp<IBinder> binder = new BBinder();
+             int64_t token = IPCThreadState::self()->clearCallingIdentity();
+diff --git a/services/audioflinger/Threads.cpp b/services/audioflinger/Threads.cpp
+index 43c634e..f8e946c 100644
+--- a/services/audioflinger/Threads.cpp
++++ b/services/audioflinger/Threads.cpp
+@@ -1235,17 +1235,7 @@ void ThreadBase::releaseWakeLock_l()
+ }
+ 
+ void ThreadBase::getPowerManager_l() {
+-    if (mSystemReady && mPowerManager == 0) {
+-        // use checkService() to avoid blocking if power service is not up yet
+-        sp<IBinder> binder =
+-            defaultServiceManager()->checkService(String16("power"));
+-        if (binder == 0) {
+-            ALOGW("Thread %s cannot connect to the power manager service", mThreadName);
+-        } else {
+-            mPowerManager = interface_cast<os::IPowerManager>(binder);
+-            binder->linkToDeath(mDeathRecipient);
+-        }
+-    }
++    // picodroid: no system_server — 'power' never exists, never attempt to acquire a wakelock.
+ }
+ 
+ void ThreadBase::updateWakeLockUids_l(const std::vector<uid_t>& uids) {
+diff --git a/cmds/dumpstate/Android.bp b/cmds/dumpstate/Android.bp
+index bb5432a..fb9f6b3 100644
+--- a/cmds/dumpstate/Android.bp
++++ b/cmds/dumpstate/Android.bp
+@@ -150,7 +150,7 @@ cc_binary {
+         "lpdump",
+         "lpdumpd",
+         "procrank",
+-        "screencap",
++        // picodroid: no system_server — screencap needs the removed SurfaceFlinger, keep it out of the image.
+         "showmap",
+         "ss",
+         "storaged",
+diff --git a/libs/sensor/Sensor.cpp b/libs/sensor/Sensor.cpp
+index c5099c8..6772e29 100644
+--- a/libs/sensor/Sensor.cpp
++++ b/libs/sensor/Sensor.cpp
+@@ -376,7 +376,8 @@ Sensor::Sensor(struct sensor_t const& hwSensor, const uuid_t& uuid, int halVersi
+     if (mRequiredPermission.length() > 0) {
+         // If the sensor is protected by a permission we need to know if it is
+         // a runtime one to determine whether we can use the permission cache.
+-        sp<IBinder> binder = defaultServiceManager()->getService(String16("permission"));
++        // picodroid: no system_server — checkService: 'permission' never exists, skip silently.
++        sp<IBinder> binder = defaultServiceManager()->checkService(String16("permission"));
+         if (binder != nullptr) {
+             sp<IPermissionController> permCtrl = interface_cast<IPermissionController>(binder);
+             mRequiredPermissionRuntime = permCtrl->isRuntimePermission(
+diff --git a/libs/sensor/SensorManager.cpp b/libs/sensor/SensorManager.cpp
+index 7d6880c..35b5500 100644
+--- a/libs/sensor/SensorManager.cpp
++++ b/libs/sensor/SensorManager.cpp
+@@ -53,27 +53,8 @@ static constexpr int DEVICE_ID_DEFAULT = 0;
+ // Returns the deviceId of the device where this uid is observed. If the uid is present on more than
+ // one devices, return the default deviceId.
+ int getDeviceIdForUid(uid_t uid) {
+-    sp<IBinder> binder =
+-            defaultServiceManager()->checkService(String16("virtualdevice_native"));
+-    if (binder != nullptr) {
+-        auto vdm = interface_cast<IVirtualDeviceManagerNative>(binder);
+-        std::vector<int> deviceIds;
+-        vdm->getDeviceIdsForUid(uid, &deviceIds);
+-        // If the UID is associated with multiple virtual devices, use the default device's
+-        // sensors as we cannot disambiguate here. This effectively means that the app has
+-        // activities on different devices at the same time, so it must handle the device
+-        // awareness by itself.
+-        if (deviceIds.size() == 1) {
+-            const int deviceId = deviceIds.at(0);
+-            int devicePolicy = IVirtualDeviceManagerNative::DEVICE_POLICY_DEFAULT;
+-            vdm->getDevicePolicy(deviceId,
+-                                 IVirtualDeviceManagerNative::POLICY_TYPE_SENSORS,
+-                                 &devicePolicy);
+-            if (devicePolicy == IVirtualDeviceManagerNative::DEVICE_POLICY_CUSTOM) {
+-                return deviceId;
+-            }
+-        }
+-    }
++    // picodroid: no system_server — 'virtualdevice_native' never exists, always the default device.
++    (void)uid;
+     return DEVICE_ID_DEFAULT;
+ }
+ 
+@@ -123,7 +104,8 @@ SensorManager& SensorManager::getInstanceForPackage(const String16& packageName)
+     // to the wrong package and stats based on app ops may be slightly off.
+     String16 opPackageName = packageName;
+     if (opPackageName.size() <= 0) {
+-        sp<IBinder> binder = defaultServiceManager()->getService(String16("permission"));
++        // picodroid: no system_server — checkService: 'permission' never exists, skip silently.
++        sp<IBinder> binder = defaultServiceManager()->checkService(String16("permission"));
+         if (binder != nullptr) {
+             Vector<String16> packages;
+             interface_cast<IPermissionController>(binder)->getPackagesForUid(uid, packages);
+@@ -132,8 +114,6 @@ SensorManager& SensorManager::getInstanceForPackage(const String16& packageName)
+             } else {
+                 ALOGE("No packages for calling UID");
+             }
+-        } else {
+-            ALOGE("Cannot get permission service");
+         }
+     }
+ 
+diff --git a/storaged/storaged_uid_monitor.cpp b/storaged/storaged_uid_monitor.cpp
+index f47bf72..6bce428 100644
+--- a/storaged/storaged_uid_monitor.cpp
++++ b/storaged/storaged_uid_monitor.cpp
+@@ -119,33 +119,9 @@ namespace {
+ 
+ void get_uid_names(const vector<int>& uids, const vector<std::string*>& uid_names)
+ {
+-    sp<IServiceManager> sm = defaultServiceManager();
+-    if (sm == NULL) {
+-        LOG(ERROR) << "defaultServiceManager failed";
+-        return;
+-    }
+-
+-    sp<IBinder> binder = sm->getService(String16("package_native"));
+-    if (binder == NULL) {
+-        LOG(ERROR) << "getService package_native failed";
+-        return;
+-    }
+-
+-    sp<IPackageManagerNative> package_mgr = interface_cast<IPackageManagerNative>(binder);
+-    std::vector<std::string> names;
+-    binder::Status status = package_mgr->getNamesForUids(uids, &names);
+-    if (!status.isOk()) {
+-        LOG(ERROR) << "package_native::getNamesForUids failed: " << status.exceptionMessage();
+-        return;
+-    }
+-
+-    for (uint32_t i = 0; i < uid_names.size(); i++) {
+-        if (!names[i].empty()) {
+-            *uid_names[i] = names[i];
+-        }
+-    }
+-
+-    refresh_uid_names = false;
++    // picodroid: no system_server — 'package_native' never exists, skip the lookup and keep numeric uid names.
++    (void)uids;
++    (void)uid_names;
+ }
+ 
+ } // namespace

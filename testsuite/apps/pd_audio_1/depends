@@ -1,0 +1,4 @@
+service::system_suspend
+service::vendor.audio-hal-aidl
+service::vendor.audio-effect-hal-aidl
+service::audioserver

@@ -1,0 +1,3 @@
+# 无 service:: 依赖：rename_eth0 为 oneshot（跑完即 stopped，launcher 的
+# wait-for-running 语义永远等不到）；eth0 改名是开机平台行为。dns 测试的直连
+# 走 eth1（宿主 cvd-ebr 桥），网络就绪由 start.sh 幂等配置（见 start.sh）。

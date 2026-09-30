@@ -1,0 +1,7 @@
+service::vendor.thermal-example
+service::vendor.camera-provider-2-7-google
+service::cameraserver
+service::media
+service::media.codeclist.generator
+service::media.swcodec
+service::vendor.graphics.allocator

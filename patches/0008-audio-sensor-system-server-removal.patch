@@ -1,0 +1,977 @@
+diff --git a/libs/binder/ActivityManager.cpp b/libs/binder/ActivityManager.cpp
+index fd83272..5523f2f 100644
+--- a/libs/binder/ActivityManager.cpp
++++ b/libs/binder/ActivityManager.cpp
+@@ -35,38 +35,8 @@ ActivityManager::ActivityManager()
+ 
+ sp<IActivityManager> ActivityManager::getService()
+ {
+-    std::lock_guard<Mutex> scoped_lock(mLock);
+-    sp<IActivityManager> service = mService;
+-    if (ProcessState::self()->isThreadPoolStarted()) {
+-        if (service == nullptr || !IInterface::asBinder(service)->isBinderAlive()) {
+-            sp<IBinder> binder = defaultServiceManager()->waitForService(String16("activity"));
+-            service = interface_cast<IActivityManager>(binder);
+-            mService = service;
+-        }
+-    } else {
+-        ALOGI("Thread pool not started. Polling for activity service.");
+-        auto startTime = std::chrono::steady_clock::now().min();
+-        while (service == nullptr || !IInterface::asBinder(service)->isBinderAlive()) {
+-            sp<IBinder> binder = defaultServiceManager()->checkService(String16("activity"));
+-            if (binder == nullptr) {
+-                // Wait for the activity service to come back...
+-                if (startTime == startTime.min()) {
+-                    startTime = std::chrono::steady_clock::now();
+-                    ALOGI("Waiting for activity service");
+-                } else if (std::chrono::steady_clock::now() - startTime > 1000s) {
+-                    // TODO(b/342453147): timeout of 1000s = 16min and 40s doesn't seem intended
+-                    ALOGW("Waiting too long for activity service, giving up");
+-                    service = nullptr;
+-                    break;
+-                }
+-                usleep(25000);
+-            } else {
+-                service = interface_cast<IActivityManager>(binder);
+-                mService = service;
+-            }
+-        }
+-    }
+-    return mService;
++    // picodroid: no system_server — 'activity' never exists, callers handle null.
++    return nullptr;
+ }
+ 
+ int ActivityManager::openContentUri(const String16& stringUri)
+diff --git a/libs/binder/IServiceManager.cpp b/libs/binder/IServiceManager.cpp
+index 0a564aa..4a66220 100644
+--- a/libs/binder/IServiceManager.cpp
++++ b/libs/binder/IServiceManager.cpp
+@@ -479,8 +479,6 @@ bool checkCallingPermission(const String16& permission)
+     return checkCallingPermission(permission, nullptr, nullptr);
+ }
+ 
+-[[clang::no_destroy]] static StaticString16 _permission(u"permission");
+-
+ bool checkCallingPermission(const String16& permission, int32_t* outPid, int32_t* outUid)
+ {
+     IPCThreadState* ipcState = IPCThreadState::self();
+@@ -492,63 +490,12 @@ bool checkCallingPermission(const String16& permission, int32_t* outPid, int32_t
+ }
+ 
+ bool checkPermission(const String16& permission, pid_t pid, uid_t uid, bool logPermissionFailure) {
+-    [[clang::no_destroy]] static std::mutex gPermissionControllerLock;
+-    [[clang::no_destroy]] static sp<IPermissionController> gPermissionController;
+-
+-    sp<IPermissionController> pc;
+-    gPermissionControllerLock.lock();
+-    pc = gPermissionController;
+-    gPermissionControllerLock.unlock();
+-
+-    auto startTime = std::chrono::steady_clock::now().min();
+-
+-    while (true) {
+-        if (pc != nullptr) {
+-            bool res = pc->checkPermission(permission, pid, uid);
+-            if (res) {
+-                if (startTime != startTime.min()) {
+-                    const auto waitTime = std::chrono::steady_clock::now() - startTime;
+-                    ALOGI("Check passed after %" PRIu64 "ms for %s from uid=%d pid=%d",
+-                          to_ms(waitTime), String8(permission).c_str(), uid, pid);
+-                }
+-                return res;
+-            }
+-
+-            // Is this a permission failure, or did the controller go away?
+-            if (IInterface::asBinder(pc)->isBinderAlive()) {
+-                if (logPermissionFailure) {
+-                    ALOGW("Permission failure: %s from uid=%d pid=%d", String8(permission).c_str(),
+-                          uid, pid);
+-                }
+-                return false;
+-            }
+-
+-            // Object is dead!
+-            gPermissionControllerLock.lock();
+-            if (gPermissionController == pc) {
+-                gPermissionController = nullptr;
+-            }
+-            gPermissionControllerLock.unlock();
+-        }
+-
+-        // Need to retrieve the permission controller.
+-        sp<IBinder> binder = defaultServiceManager()->checkService(_permission);
+-        if (binder == nullptr) {
+-            // Wait for the permission controller to come back...
+-            if (startTime == startTime.min()) {
+-                startTime = std::chrono::steady_clock::now();
+-                ALOGI("Waiting to check permission %s from uid=%d pid=%d",
+-                      String8(permission).c_str(), uid, pid);
+-            }
+-            sleep(1);
+-        } else {
+-            pc = interface_cast<IPermissionController>(binder);
+-            // Install the new permission controller, and try again.
+-            gPermissionControllerLock.lock();
+-            gPermissionController = pc;
+-            gPermissionControllerLock.unlock();
+-        }
+-    }
++    // picodroid: no system_server — 'permission' never exists; deny instead of polling forever.
++    (void)permission;
++    (void)pid;
++    (void)uid;
++    (void)logPermissionFailure;
++    return false;
+ }
+ 
+ #endif //__ANDROID_VNDK__
+diff --git a/libs/binder/PermissionController.cpp b/libs/binder/PermissionController.cpp
+index c11eb7d..0c3c7a3 100644
+--- a/libs/binder/PermissionController.cpp
++++ b/libs/binder/PermissionController.cpp
+@@ -29,28 +29,8 @@ PermissionController::PermissionController()
+ 
+ sp<IPermissionController> PermissionController::getService()
+ {
+-    std::lock_guard<Mutex> scoped_lock(mLock);
+-    auto startTime = std::chrono::steady_clock::now().min();
+-    sp<IPermissionController> service = mService;
+-    while (service == nullptr || !IInterface::asBinder(service)->isBinderAlive()) {
+-        sp<IBinder> binder = defaultServiceManager()->checkService(String16("permission"));
+-        if (binder == nullptr) {
+-            // Wait for the activity service to come back...
+-            if (startTime == startTime.min()) {
+-                startTime = std::chrono::steady_clock::now();
+-                ALOGI("Waiting for permission service");
+-            } else if (std::chrono::steady_clock::now() - startTime > 10s) {
+-                ALOGW("Waiting too long for permission service, giving up");
+-                service = nullptr;
+-                break;
+-            }
+-            sleep(1);
+-        } else {
+-            service = interface_cast<IPermissionController>(binder);
+-            mService = service;
+-        }
+-    }
+-    return service;
++    // picodroid: no system_server — 'permission' never exists; callers fall back to deny.
++    return nullptr;
+ }
+ 
+ bool PermissionController::checkPermission(const String16& permission, int32_t pid, int32_t uid)
+diff --git a/libs/sensorprivacy/SensorPrivacyManager.cpp b/libs/sensorprivacy/SensorPrivacyManager.cpp
+index 0147e23..7a19c6c 100644
+--- a/libs/sensorprivacy/SensorPrivacyManager.cpp
++++ b/libs/sensorprivacy/SensorPrivacyManager.cpp
+@@ -31,13 +31,8 @@ SensorPrivacyManager::SensorPrivacyManager()
+ 
+ sp<hardware::ISensorPrivacyManager> SensorPrivacyManager::getService()
+ {
+-    std::lock_guard<Mutex> scoped_lock(mLock);
+-    sp<hardware::ISensorPrivacyManager> service = mService;
+-    if (service == nullptr || !IInterface::asBinder(service)->isBinderAlive()) {
+-      sp<IBinder> binder = defaultServiceManager()->waitForService(String16("sensor_privacy"));
+-      mService = interface_cast<hardware::ISensorPrivacyManager>(binder);
+-    }
+-    return mService;
++    // picodroid: no system_server — 'sensor_privacy' never exists, callers assume disabled.
++    return nullptr;
+ }
+ 
+ bool SensorPrivacyManager::supportsSensorToggle(int toggleType, int sensor) {
+diff --git a/services/sensorservice/SensorService.cpp b/services/sensorservice/SensorService.cpp
+index 912d5cb..974d2cc 100644
+--- a/services/sensorservice/SensorService.cpp
++++ b/services/sensorservice/SensorService.cpp
+@@ -17,10 +17,8 @@
+ 
+ #include <aidl/android/hardware/sensors/ISensors.h>
+ #include <android-base/strings.h>
+-#include <android/content/pm/IPackageManagerNative.h>
+ #include <android/util/ProtoOutputStream.h>
+ #include <android_hardware_flags.h>
+-#include <binder/ActivityManager.h>
+ #include <binder/BinderService.h>
+ #include <binder/IServiceManager.h>
+ #include <binder/PermissionCache.h>
+@@ -136,30 +134,8 @@ class RuntimeSensorCallbackProxy : public RuntimeSensor::SensorCallback {
+ } // namespace
+ 
+ static bool isAutomotive() {
+-    sp<IServiceManager> serviceManager = defaultServiceManager();
+-    if (serviceManager.get() == nullptr) {
+-        ALOGE("%s: unable to access native ServiceManager", __func__);
+-        return false;
+-    }
+-
+-    sp<content::pm::IPackageManagerNative> packageManager;
+-    sp<IBinder> binder = serviceManager->waitForService(String16("package_native"));
+-    packageManager = interface_cast<content::pm::IPackageManagerNative>(binder);
+-    if (packageManager == nullptr) {
+-        ALOGE("%s: unable to access native PackageManager", __func__);
+-        return false;
+-    }
+-
+-    bool isAutomotive = false;
+-    binder::Status status =
+-        packageManager->hasSystemFeature(String16("android.hardware.type.automotive"), 0,
+-                                         &isAutomotive);
+-    if (!status.isOk()) {
+-        ALOGE("%s: hasSystemFeature failed: %s", __func__, status.exceptionMessage().c_str());
+-        return false;
+-    }
+-
+-    return isAutomotive;
++    // picodroid: no system_server — no PackageManagerNative; never automotive.
++    return false;
+ }
+ 
+ SensorService::SensorService()
+@@ -2517,7 +2493,6 @@ bool SensorService::canAccessSensor(const Sensor& sensor, const char* operation,
+         return true;
+     }
+ 
+-    const int32_t opCode = sensor.getRequiredAppOp();
+     int targetSdkVersion = getTargetSdkVersion(opPackageName);
+ 
+     bool canAccess = false;
+@@ -2532,16 +2507,8 @@ bool SensorService::canAccessSensor(const Sensor& sensor, const char* operation,
+         // Allow access if it is requested from system.
+         canAccess = true;
+     } else if (hasPermissionForSensor(sensor)) {
+-        // Ensure that the AppOp is allowed, or that there is no necessary app op
+-        // for the sensor
+-        if (opCode >= 0) {
+-            const int32_t appOpMode =
+-                    sAppOpsManager.checkOp(opCode, IPCThreadState::self()->getCallingUid(),
+-                                           opPackageName);
+-            canAccess = (appOpMode == AppOpsManager::MODE_ALLOWED);
+-        } else {
+-            canAccess = true;
+-        }
++        // picodroid: no system_server — no AppOps service; all app ops are allowed.
++        canAccess = true;
+     }
+ 
+     if (!canAccess) {
+@@ -2569,36 +2536,10 @@ bool SensorService::hasPermissionForSensor(const Sensor& sensor) {
+ }
+ 
+ int SensorService::getTargetSdkVersion(const String16& opPackageName) {
+-    // Don't query the SDK version for the ISensorManager descriptor as it
+-    // doesn't have one. This descriptor tends to be used for VNDK clients, but
+-    // can technically be set by anyone so don't give it elevated privileges.
+-    bool isVNDK = opPackageName.startsWith(sSensorInterfaceDescriptorPrefix) &&
+-                  opPackageName.contains(String16("@"));
+-    if (isVNDK) {
+-        return -1;
+-    }
+-
+-    Mutex::Autolock packageLock(sPackageTargetVersionLock);
+-    int targetSdkVersion = -1;
+-    auto entry = sPackageTargetVersion.find(opPackageName);
+-    if (entry != sPackageTargetVersion.end()) {
+-        targetSdkVersion = entry->second;
+-    } else {
+-        sp<IBinder> binder = defaultServiceManager()->getService(String16("package_native"));
+-        if (binder != nullptr) {
+-            sp<content::pm::IPackageManagerNative> packageManager =
+-                    interface_cast<content::pm::IPackageManagerNative>(binder);
+-            if (packageManager != nullptr) {
+-                binder::Status status = packageManager->getTargetSdkVersionForPackage(
+-                        opPackageName, &targetSdkVersion);
+-                if (!status.isOk()) {
+-                    targetSdkVersion = -1;
+-                }
+-            }
+-        }
+-        sPackageTargetVersion[opPackageName] = targetSdkVersion;
+-    }
+-    return targetSdkVersion;
++    // picodroid: no system_server — no PackageManagerNative; report unknown SDK version for
++    // every package (upstream already reported -1 for VNDK descriptors and missing packages).
++    (void)opPackageName;
++    return -1;
+ }
+ 
+ void SensorService::resetTargetSdkVersionCache(const String16& opPackageName) {
+@@ -2754,42 +2695,23 @@ bool SensorService::isOperationRestrictedLocked(const String16& opPackageName) {
+ }
+ 
+ void SensorService::UidPolicy::registerSelf() {
+-    ActivityManager am;
+-    am.registerUidObserver(this, ActivityManager::UID_OBSERVER_GONE
+-            | ActivityManager::UID_OBSERVER_IDLE
+-            | ActivityManager::UID_OBSERVER_ACTIVE,
+-            ActivityManager::PROCESS_STATE_UNKNOWN,
+-            String16("android"));
++    // picodroid: no system_server — no ActivityManager to register a uid observer with.
+ }
+ 
+ void SensorService::UidPolicy::unregisterSelf() {
+-    ActivityManager am;
+-    am.unregisterUidObserver(this);
++    // picodroid: no system_server — nothing was registered.
+ }
+ 
+ void SensorService::UidPolicy::onUidGone(__unused uid_t uid, __unused bool disabled) {
+-    onUidIdle(uid, disabled);
++    // picodroid: no system_server — observer callbacks never fire.
+ }
+ 
+-void SensorService::UidPolicy::onUidActive(uid_t uid) {
+-    {
+-        Mutex::Autolock _l(mUidLock);
+-        mActiveUids.insert(uid);
+-    }
+-    postUidStateChanged(uid, UID_STATE_ACTIVE);
++void SensorService::UidPolicy::onUidActive(__unused uid_t uid) {
++    // picodroid: no system_server — observer callbacks never fire.
+ }
+ 
+-void SensorService::UidPolicy::onUidIdle(uid_t uid, __unused bool disabled) {
+-    bool deleted = false;
+-    {
+-        Mutex::Autolock _l(mUidLock);
+-        if (mActiveUids.erase(uid) > 0) {
+-            deleted = true;
+-        }
+-    }
+-    if (deleted) {
+-        postUidStateChanged(uid, UID_STATE_IDLE);
+-    }
++void SensorService::UidPolicy::onUidIdle(__unused uid_t uid, __unused bool disabled) {
++    // picodroid: no system_server — observer callbacks never fire.
+ }
+ 
+ void SensorService::UidPolicy::addOverrideUid(uid_t uid, bool active) {
+@@ -2830,12 +2752,9 @@ void SensorService::UidPolicy::postUidStateChanged(uid_t uid, UidState state) {
+ }
+ 
+ bool SensorService::UidPolicy::isUidActive(uid_t uid) {
+-    // Non-app UIDs are considered always active
+-    if (uid < FIRST_APPLICATION_UID) {
+-        return true;
+-    }
+-    Mutex::Autolock _l(mUidLock);
+-    return isUidActiveLocked(uid);
++    // picodroid: no system_server — no uid state tracking; every uid is considered active.
++    (void)uid;
++    return true;
+ }
+ 
+ bool SensorService::UidPolicy::isUidActiveLocked(uid_t uid) {
+@@ -2924,20 +2843,16 @@ status_t SensorService::adjustRateLevelBasedOnMicAndPermission(int* requestedRat
+ }
+ 
+ void SensorService::SensorPrivacyPolicy::registerSelf() {
+-    AutoCallerClear acc;
+-    SensorPrivacyManager spm;
+-    mSensorPrivacyEnabled = spm.isSensorPrivacyEnabled();
+-    spm.addSensorPrivacyListener(this);
++    // picodroid: no system_server — no sensor_privacy service to query or listen to.
+ }
+ 
+ void SensorService::SensorPrivacyPolicy::unregisterSelf() {
+-    AutoCallerClear acc;
+-    SensorPrivacyManager spm;
+-    spm.removeSensorPrivacyListener(this);
++    // picodroid: no system_server — nothing was registered.
+ }
+ 
+ bool SensorService::SensorPrivacyPolicy::isSensorPrivacyEnabled() {
+-    return mSensorPrivacyEnabled;
++    // picodroid: no system_server — sensor privacy is never enabled.
++    return false;
+ }
+ 
+ binder::Status SensorService::SensorPrivacyPolicy::onSensorPrivacyChanged(int toggleType __unused,
+@@ -2956,22 +2871,11 @@ binder::Status SensorService::SensorPrivacyPolicy::onSensorPrivacyChanged(int to
+ }
+ 
+ void SensorService::MicrophonePrivacyPolicy::registerSelf() {
+-    AutoCallerClear acc;
+-    SensorPrivacyManager spm;
+-    mSensorPrivacyEnabled =
+-            spm.isToggleSensorPrivacyEnabled(
+-                    SensorPrivacyManager::TOGGLE_TYPE_SOFTWARE,
+-            SensorPrivacyManager::TOGGLE_SENSOR_MICROPHONE)
+-                    || spm.isToggleSensorPrivacyEnabled(
+-                            SensorPrivacyManager::TOGGLE_TYPE_HARDWARE,
+-                            SensorPrivacyManager::TOGGLE_SENSOR_MICROPHONE);
+-    spm.addToggleSensorPrivacyListener(this);
++    // picodroid: no system_server — no sensor_privacy service to query or listen to.
+ }
+ 
+ void SensorService::MicrophonePrivacyPolicy::unregisterSelf() {
+-    AutoCallerClear acc;
+-    SensorPrivacyManager spm;
+-    spm.removeToggleSensorPrivacyListener(this);
++    // picodroid: no system_server — nothing was registered.
+ }
+ 
+ binder::Status SensorService::MicrophonePrivacyPolicy::onSensorPrivacyChanged(int toggleType __unused,
+@@ -3050,16 +2954,8 @@ SensorService::ConnectionSafeAutolock SensorService::SensorConnectionHolder::loc
+ }
+ 
+ bool SensorService::isPackageDebuggable(const String16& opPackageName) {
+-    bool debugMode = false;
+-    sp<IBinder> binder = defaultServiceManager()->getService(String16("package_native"));
+-    if (binder != nullptr) {
+-        sp<content::pm::IPackageManagerNative> packageManager =
+-                interface_cast<content::pm::IPackageManagerNative>(binder);
+-        if (packageManager != nullptr) {
+-            binder::Status status = packageManager->isPackageDebuggable(
+-                opPackageName, &debugMode);
+-        }
+-    }
+-    return debugMode;
++    // picodroid: no system_server — no PackageManagerNative; packages are never debuggable.
++    (void)opPackageName;
++    return false;
+ }
+ } // namespace android
+diff --git a/services/audioflinger/datapath/TrackMetrics.h b/services/audioflinger/datapath/TrackMetrics.h
+index ad5d3db..c6188a2 100644
+--- a/services/audioflinger/datapath/TrackMetrics.h
++++ b/services/audioflinger/datapath/TrackMetrics.h
+@@ -18,7 +18,6 @@
+ 
+ #include <binder/IActivityManager.h>
+ #include <binder/IPCThreadState.h>
+-#include <binder/IServiceManager.h>
+ #include <media/MediaMetricsItem.h>
+ 
+ #include <mutex>
+@@ -255,13 +254,8 @@ private:
+ 
+     // Meyer's singleton is thread-safe.
+     static const sp<IActivityManager>& getActivityManager() {
+-        static const auto activityManager = []() -> sp<IActivityManager> {
+-            const sp<IServiceManager> sm(defaultServiceManager());
+-            if (sm != nullptr) {
+-                 return interface_cast<IActivityManager>(sm->checkService(String16("activity")));
+-            }
+-            return nullptr;
+-        }();
++        // picodroid: no system_server — 'activity' never exists; no FGS api logging.
++        static const sp<IActivityManager> activityManager = nullptr;
+         return activityManager;
+     }
+ 
+diff --git a/services/audiopolicy/service/AudioPolicyService.cpp b/services/audiopolicy/service/AudioPolicyService.cpp
+index f860535..793c739 100644
+--- a/services/audiopolicy/service/AudioPolicyService.cpp
++++ b/services/audiopolicy/service/AudioPolicyService.cpp
+@@ -39,7 +39,6 @@
+ #include <media/AudioParameter.h>
+ #include <mediautils/MethodStatistics.h>
+ #include <mediautils/TimeCheck.h>
+-#include <sensorprivacy/SensorPrivacyManager.h>
+ 
+ #include <system/audio.h>
+ #include <system/audio_policy.h>
+@@ -1537,28 +1536,12 @@ status_t AudioPolicyService::unregisterOutput(audio_io_handle_t output) {
+ // -----------  AudioPolicyService::UidPolicy implementation ----------
+ 
+ void AudioPolicyService::UidPolicy::registerSelf() {
+-    status_t res = mAm.linkToDeath(this);
+-    mAm.registerUidObserver(this, ActivityManager::UID_OBSERVER_GONE
+-            | ActivityManager::UID_OBSERVER_IDLE
+-            | ActivityManager::UID_OBSERVER_ACTIVE
+-            | ActivityManager::UID_OBSERVER_PROCSTATE,
+-            ActivityManager::PROCESS_STATE_UNKNOWN,
+-            String16("audioserver"));
+-    if (!res) {
+-        audio_utils::lock_guard _l(mMutex);
+-        mObserverRegistered = true;
+-    } else {
+-        ALOGE("UidPolicy::registerSelf linkToDeath failed: %d", res);
+-
+-        mAm.unregisterUidObserver(this);
+-    }
++    // picodroid: no system_server — no ActivityManager to observe; with no observer
++    // registered, getUidState()/isUidActive() treat every uid as active/PROCESS_STATE_TOP.
+ }
+ 
+ void AudioPolicyService::UidPolicy::unregisterSelf() {
+-    mAm.unlinkToDeath(this);
+-    mAm.unregisterUidObserver(this);
+-    audio_utils::lock_guard _l(mMutex);
+-    mObserverRegistered = false;
++    // picodroid: no system_server — nothing was registered.
+ }
+ 
+ void AudioPolicyService::UidPolicy::binderDied(__unused const wp<IBinder> &who) {
+@@ -1798,14 +1781,11 @@ void AudioPolicyService::UidPolicy::dumpInternals(int fd) {
+ 
+ // -----------  AudioPolicyService::SensorPrivacyService implementation ----------
+ void AudioPolicyService::SensorPrivacyPolicy::registerSelf() {
+-    SensorPrivacyManager spm;
+-    mSensorPrivacyEnabled = spm.isSensorPrivacyEnabled();
+-    spm.addSensorPrivacyListener(this);
++    // picodroid: no system_server — no sensor_privacy service; stays disabled (false).
+ }
+ 
+ void AudioPolicyService::SensorPrivacyPolicy::unregisterSelf() {
+-    SensorPrivacyManager spm;
+-    spm.removeSensorPrivacyListener(this);
++    // picodroid: no system_server — nothing was registered.
+ }
+ 
+ bool AudioPolicyService::SensorPrivacyPolicy::isSensorPrivacyEnabled() {
+diff --git a/libs/binder/ActivityManager.cpp b/libs/binder/ActivityManager.cpp
+index fd83272..5523f2f 100644
+--- a/libs/binder/ActivityManager.cpp
++++ b/libs/binder/ActivityManager.cpp
+@@ -35,38 +35,8 @@ ActivityManager::ActivityManager()
+ 
+ sp<IActivityManager> ActivityManager::getService()
+ {
+-    std::lock_guard<Mutex> scoped_lock(mLock);
+-    sp<IActivityManager> service = mService;
+-    if (ProcessState::self()->isThreadPoolStarted()) {
+-        if (service == nullptr || !IInterface::asBinder(service)->isBinderAlive()) {
+-            sp<IBinder> binder = defaultServiceManager()->waitForService(String16("activity"));
+-            service = interface_cast<IActivityManager>(binder);
+-            mService = service;
+-        }
+-    } else {
+-        ALOGI("Thread pool not started. Polling for activity service.");
+-        auto startTime = std::chrono::steady_clock::now().min();
+-        while (service == nullptr || !IInterface::asBinder(service)->isBinderAlive()) {
+-            sp<IBinder> binder = defaultServiceManager()->checkService(String16("activity"));
+-            if (binder == nullptr) {
+-                // Wait for the activity service to come back...
+-                if (startTime == startTime.min()) {
+-                    startTime = std::chrono::steady_clock::now();
+-                    ALOGI("Waiting for activity service");
+-                } else if (std::chrono::steady_clock::now() - startTime > 1000s) {
+-                    // TODO(b/342453147): timeout of 1000s = 16min and 40s doesn't seem intended
+-                    ALOGW("Waiting too long for activity service, giving up");
+-                    service = nullptr;
+-                    break;
+-                }
+-                usleep(25000);
+-            } else {
+-                service = interface_cast<IActivityManager>(binder);
+-                mService = service;
+-            }
+-        }
+-    }
+-    return mService;
++    // picodroid: no system_server — 'activity' never exists, callers handle null.
++    return nullptr;
+ }
+ 
+ int ActivityManager::openContentUri(const String16& stringUri)
+diff --git a/libs/binder/IServiceManager.cpp b/libs/binder/IServiceManager.cpp
+index 0a564aa..9c14b25 100644
+--- a/libs/binder/IServiceManager.cpp
++++ b/libs/binder/IServiceManager.cpp
+@@ -479,8 +479,6 @@ bool checkCallingPermission(const String16& permission)
+     return checkCallingPermission(permission, nullptr, nullptr);
+ }
+ 
+-[[clang::no_destroy]] static StaticString16 _permission(u"permission");
+-
+ bool checkCallingPermission(const String16& permission, int32_t* outPid, int32_t* outUid)
+ {
+     IPCThreadState* ipcState = IPCThreadState::self();
+@@ -492,63 +490,12 @@ bool checkCallingPermission(const String16& permission, int32_t* outPid, int32_t
+ }
+ 
+ bool checkPermission(const String16& permission, pid_t pid, uid_t uid, bool logPermissionFailure) {
+-    [[clang::no_destroy]] static std::mutex gPermissionControllerLock;
+-    [[clang::no_destroy]] static sp<IPermissionController> gPermissionController;
+-
+-    sp<IPermissionController> pc;
+-    gPermissionControllerLock.lock();
+-    pc = gPermissionController;
+-    gPermissionControllerLock.unlock();
+-
+-    auto startTime = std::chrono::steady_clock::now().min();
+-
+-    while (true) {
+-        if (pc != nullptr) {
+-            bool res = pc->checkPermission(permission, pid, uid);
+-            if (res) {
+-                if (startTime != startTime.min()) {
+-                    const auto waitTime = std::chrono::steady_clock::now() - startTime;
+-                    ALOGI("Check passed after %" PRIu64 "ms for %s from uid=%d pid=%d",
+-                          to_ms(waitTime), String8(permission).c_str(), uid, pid);
+-                }
+-                return res;
+-            }
+-
+-            // Is this a permission failure, or did the controller go away?
+-            if (IInterface::asBinder(pc)->isBinderAlive()) {
+-                if (logPermissionFailure) {
+-                    ALOGW("Permission failure: %s from uid=%d pid=%d", String8(permission).c_str(),
+-                          uid, pid);
+-                }
+-                return false;
+-            }
+-
+-            // Object is dead!
+-            gPermissionControllerLock.lock();
+-            if (gPermissionController == pc) {
+-                gPermissionController = nullptr;
+-            }
+-            gPermissionControllerLock.unlock();
+-        }
+-
+-        // Need to retrieve the permission controller.
+-        sp<IBinder> binder = defaultServiceManager()->checkService(_permission);
+-        if (binder == nullptr) {
+-            // Wait for the permission controller to come back...
+-            if (startTime == startTime.min()) {
+-                startTime = std::chrono::steady_clock::now();
+-                ALOGI("Waiting to check permission %s from uid=%d pid=%d",
+-                      String8(permission).c_str(), uid, pid);
+-            }
+-            sleep(1);
+-        } else {
+-            pc = interface_cast<IPermissionController>(binder);
+-            // Install the new permission controller, and try again.
+-            gPermissionControllerLock.lock();
+-            gPermissionController = pc;
+-            gPermissionControllerLock.unlock();
+-        }
+-    }
++    // picodroid: 权限框架移除——默认有权限（全 root 世界，无不可信 uid）。
++    (void)permission;
++    (void)pid;
++    (void)uid;
++    (void)logPermissionFailure;
++    return true;
+ }
+ 
+ #endif //__ANDROID_VNDK__
+diff --git a/libs/binder/PermissionController.cpp b/libs/binder/PermissionController.cpp
+index c11eb7d..98bdc9e 100644
+--- a/libs/binder/PermissionController.cpp
++++ b/libs/binder/PermissionController.cpp
+@@ -29,40 +29,22 @@ PermissionController::PermissionController()
+ 
+ sp<IPermissionController> PermissionController::getService()
+ {
+-    std::lock_guard<Mutex> scoped_lock(mLock);
+-    auto startTime = std::chrono::steady_clock::now().min();
+-    sp<IPermissionController> service = mService;
+-    while (service == nullptr || !IInterface::asBinder(service)->isBinderAlive()) {
+-        sp<IBinder> binder = defaultServiceManager()->checkService(String16("permission"));
+-        if (binder == nullptr) {
+-            // Wait for the activity service to come back...
+-            if (startTime == startTime.min()) {
+-                startTime = std::chrono::steady_clock::now();
+-                ALOGI("Waiting for permission service");
+-            } else if (std::chrono::steady_clock::now() - startTime > 10s) {
+-                ALOGW("Waiting too long for permission service, giving up");
+-                service = nullptr;
+-                break;
+-            }
+-            sleep(1);
+-        } else {
+-            service = interface_cast<IPermissionController>(binder);
+-            mService = service;
+-        }
+-    }
+-    return service;
++    // picodroid: 权限框架移除——'permission' 服务不存在，各 API 走"默认有权限"语义。
++    return nullptr;
+ }
+ 
+ bool PermissionController::checkPermission(const String16& permission, int32_t pid, int32_t uid)
+ {
+-    sp<IPermissionController> service = getService();
+-    return service != nullptr ? service->checkPermission(permission, pid, uid) : false;
++    // picodroid: 默认有权限（全 root 世界）。
++    (void)permission; (void)pid; (void)uid;
++    return true;
+ }
+ 
+ int32_t PermissionController::noteOp(const String16& op, int32_t uid, const String16& packageName)
+ {
+-    sp<IPermissionController> service = getService();
+-    return service != nullptr ? service->noteOp(op, uid, packageName) : MODE_ERRORED;
++    // picodroid: 默认有权限。
++    (void)op; (void)uid; (void)packageName;
++    return MODE_ALLOWED;
+ }
+ 
+ void PermissionController::getPackagesForUid(const uid_t uid, Vector<String16> &packages)
+diff --git a/libs/sensorprivacy/SensorPrivacyManager.cpp b/libs/sensorprivacy/SensorPrivacyManager.cpp
+index 0147e23..7a19c6c 100644
+--- a/libs/sensorprivacy/SensorPrivacyManager.cpp
++++ b/libs/sensorprivacy/SensorPrivacyManager.cpp
+@@ -31,13 +31,8 @@ SensorPrivacyManager::SensorPrivacyManager()
+ 
+ sp<hardware::ISensorPrivacyManager> SensorPrivacyManager::getService()
+ {
+-    std::lock_guard<Mutex> scoped_lock(mLock);
+-    sp<hardware::ISensorPrivacyManager> service = mService;
+-    if (service == nullptr || !IInterface::asBinder(service)->isBinderAlive()) {
+-      sp<IBinder> binder = defaultServiceManager()->waitForService(String16("sensor_privacy"));
+-      mService = interface_cast<hardware::ISensorPrivacyManager>(binder);
+-    }
+-    return mService;
++    // picodroid: no system_server — 'sensor_privacy' never exists, callers assume disabled.
++    return nullptr;
+ }
+ 
+ bool SensorPrivacyManager::supportsSensorToggle(int toggleType, int sensor) {
+diff --git a/services/sensorservice/SensorService.cpp b/services/sensorservice/SensorService.cpp
+index 912d5cb..974d2cc 100644
+--- a/services/sensorservice/SensorService.cpp
++++ b/services/sensorservice/SensorService.cpp
+@@ -17,10 +17,8 @@
+ 
+ #include <aidl/android/hardware/sensors/ISensors.h>
+ #include <android-base/strings.h>
+-#include <android/content/pm/IPackageManagerNative.h>
+ #include <android/util/ProtoOutputStream.h>
+ #include <android_hardware_flags.h>
+-#include <binder/ActivityManager.h>
+ #include <binder/BinderService.h>
+ #include <binder/IServiceManager.h>
+ #include <binder/PermissionCache.h>
+@@ -136,30 +134,8 @@ class RuntimeSensorCallbackProxy : public RuntimeSensor::SensorCallback {
+ } // namespace
+ 
+ static bool isAutomotive() {
+-    sp<IServiceManager> serviceManager = defaultServiceManager();
+-    if (serviceManager.get() == nullptr) {
+-        ALOGE("%s: unable to access native ServiceManager", __func__);
+-        return false;
+-    }
+-
+-    sp<content::pm::IPackageManagerNative> packageManager;
+-    sp<IBinder> binder = serviceManager->waitForService(String16("package_native"));
+-    packageManager = interface_cast<content::pm::IPackageManagerNative>(binder);
+-    if (packageManager == nullptr) {
+-        ALOGE("%s: unable to access native PackageManager", __func__);
+-        return false;
+-    }
+-
+-    bool isAutomotive = false;
+-    binder::Status status =
+-        packageManager->hasSystemFeature(String16("android.hardware.type.automotive"), 0,
+-                                         &isAutomotive);
+-    if (!status.isOk()) {
+-        ALOGE("%s: hasSystemFeature failed: %s", __func__, status.exceptionMessage().c_str());
+-        return false;
+-    }
+-
+-    return isAutomotive;
++    // picodroid: no system_server — no PackageManagerNative; never automotive.
++    return false;
+ }
+ 
+ SensorService::SensorService()
+@@ -2517,7 +2493,6 @@ bool SensorService::canAccessSensor(const Sensor& sensor, const char* operation,
+         return true;
+     }
+ 
+-    const int32_t opCode = sensor.getRequiredAppOp();
+     int targetSdkVersion = getTargetSdkVersion(opPackageName);
+ 
+     bool canAccess = false;
+@@ -2532,16 +2507,8 @@ bool SensorService::canAccessSensor(const Sensor& sensor, const char* operation,
+         // Allow access if it is requested from system.
+         canAccess = true;
+     } else if (hasPermissionForSensor(sensor)) {
+-        // Ensure that the AppOp is allowed, or that there is no necessary app op
+-        // for the sensor
+-        if (opCode >= 0) {
+-            const int32_t appOpMode =
+-                    sAppOpsManager.checkOp(opCode, IPCThreadState::self()->getCallingUid(),
+-                                           opPackageName);
+-            canAccess = (appOpMode == AppOpsManager::MODE_ALLOWED);
+-        } else {
+-            canAccess = true;
+-        }
++        // picodroid: no system_server — no AppOps service; all app ops are allowed.
++        canAccess = true;
+     }
+ 
+     if (!canAccess) {
+@@ -2569,36 +2536,10 @@ bool SensorService::hasPermissionForSensor(const Sensor& sensor) {
+ }
+ 
+ int SensorService::getTargetSdkVersion(const String16& opPackageName) {
+-    // Don't query the SDK version for the ISensorManager descriptor as it
+-    // doesn't have one. This descriptor tends to be used for VNDK clients, but
+-    // can technically be set by anyone so don't give it elevated privileges.
+-    bool isVNDK = opPackageName.startsWith(sSensorInterfaceDescriptorPrefix) &&
+-                  opPackageName.contains(String16("@"));
+-    if (isVNDK) {
+-        return -1;
+-    }
+-
+-    Mutex::Autolock packageLock(sPackageTargetVersionLock);
+-    int targetSdkVersion = -1;
+-    auto entry = sPackageTargetVersion.find(opPackageName);
+-    if (entry != sPackageTargetVersion.end()) {
+-        targetSdkVersion = entry->second;
+-    } else {
+-        sp<IBinder> binder = defaultServiceManager()->getService(String16("package_native"));
+-        if (binder != nullptr) {
+-            sp<content::pm::IPackageManagerNative> packageManager =
+-                    interface_cast<content::pm::IPackageManagerNative>(binder);
+-            if (packageManager != nullptr) {
+-                binder::Status status = packageManager->getTargetSdkVersionForPackage(
+-                        opPackageName, &targetSdkVersion);
+-                if (!status.isOk()) {
+-                    targetSdkVersion = -1;
+-                }
+-            }
+-        }
+-        sPackageTargetVersion[opPackageName] = targetSdkVersion;
+-    }
+-    return targetSdkVersion;
++    // picodroid: no system_server — no PackageManagerNative; report unknown SDK version for
++    // every package (upstream already reported -1 for VNDK descriptors and missing packages).
++    (void)opPackageName;
++    return -1;
+ }
+ 
+ void SensorService::resetTargetSdkVersionCache(const String16& opPackageName) {
+@@ -2754,42 +2695,23 @@ bool SensorService::isOperationRestrictedLocked(const String16& opPackageName) {
+ }
+ 
+ void SensorService::UidPolicy::registerSelf() {
+-    ActivityManager am;
+-    am.registerUidObserver(this, ActivityManager::UID_OBSERVER_GONE
+-            | ActivityManager::UID_OBSERVER_IDLE
+-            | ActivityManager::UID_OBSERVER_ACTIVE,
+-            ActivityManager::PROCESS_STATE_UNKNOWN,
+-            String16("android"));
++    // picodroid: no system_server — no ActivityManager to register a uid observer with.
+ }
+ 
+ void SensorService::UidPolicy::unregisterSelf() {
+-    ActivityManager am;
+-    am.unregisterUidObserver(this);
++    // picodroid: no system_server — nothing was registered.
+ }
+ 
+ void SensorService::UidPolicy::onUidGone(__unused uid_t uid, __unused bool disabled) {
+-    onUidIdle(uid, disabled);
++    // picodroid: no system_server — observer callbacks never fire.
+ }
+ 
+-void SensorService::UidPolicy::onUidActive(uid_t uid) {
+-    {
+-        Mutex::Autolock _l(mUidLock);
+-        mActiveUids.insert(uid);
+-    }
+-    postUidStateChanged(uid, UID_STATE_ACTIVE);
++void SensorService::UidPolicy::onUidActive(__unused uid_t uid) {
++    // picodroid: no system_server — observer callbacks never fire.
+ }
+ 
+-void SensorService::UidPolicy::onUidIdle(uid_t uid, __unused bool disabled) {
+-    bool deleted = false;
+-    {
+-        Mutex::Autolock _l(mUidLock);
+-        if (mActiveUids.erase(uid) > 0) {
+-            deleted = true;
+-        }
+-    }
+-    if (deleted) {
+-        postUidStateChanged(uid, UID_STATE_IDLE);
+-    }
++void SensorService::UidPolicy::onUidIdle(__unused uid_t uid, __unused bool disabled) {
++    // picodroid: no system_server — observer callbacks never fire.
+ }
+ 
+ void SensorService::UidPolicy::addOverrideUid(uid_t uid, bool active) {
+@@ -2830,12 +2752,9 @@ void SensorService::UidPolicy::postUidStateChanged(uid_t uid, UidState state) {
+ }
+ 
+ bool SensorService::UidPolicy::isUidActive(uid_t uid) {
+-    // Non-app UIDs are considered always active
+-    if (uid < FIRST_APPLICATION_UID) {
+-        return true;
+-    }
+-    Mutex::Autolock _l(mUidLock);
+-    return isUidActiveLocked(uid);
++    // picodroid: no system_server — no uid state tracking; every uid is considered active.
++    (void)uid;
++    return true;
+ }
+ 
+ bool SensorService::UidPolicy::isUidActiveLocked(uid_t uid) {
+@@ -2924,20 +2843,16 @@ status_t SensorService::adjustRateLevelBasedOnMicAndPermission(int* requestedRat
+ }
+ 
+ void SensorService::SensorPrivacyPolicy::registerSelf() {
+-    AutoCallerClear acc;
+-    SensorPrivacyManager spm;
+-    mSensorPrivacyEnabled = spm.isSensorPrivacyEnabled();
+-    spm.addSensorPrivacyListener(this);
++    // picodroid: no system_server — no sensor_privacy service to query or listen to.
+ }
+ 
+ void SensorService::SensorPrivacyPolicy::unregisterSelf() {
+-    AutoCallerClear acc;
+-    SensorPrivacyManager spm;
+-    spm.removeSensorPrivacyListener(this);
++    // picodroid: no system_server — nothing was registered.
+ }
+ 
+ bool SensorService::SensorPrivacyPolicy::isSensorPrivacyEnabled() {
+-    return mSensorPrivacyEnabled;
++    // picodroid: no system_server — sensor privacy is never enabled.
++    return false;
+ }
+ 
+ binder::Status SensorService::SensorPrivacyPolicy::onSensorPrivacyChanged(int toggleType __unused,
+@@ -2956,22 +2871,11 @@ binder::Status SensorService::SensorPrivacyPolicy::onSensorPrivacyChanged(int to
+ }
+ 
+ void SensorService::MicrophonePrivacyPolicy::registerSelf() {
+-    AutoCallerClear acc;
+-    SensorPrivacyManager spm;
+-    mSensorPrivacyEnabled =
+-            spm.isToggleSensorPrivacyEnabled(
+-                    SensorPrivacyManager::TOGGLE_TYPE_SOFTWARE,
+-            SensorPrivacyManager::TOGGLE_SENSOR_MICROPHONE)
+-                    || spm.isToggleSensorPrivacyEnabled(
+-                            SensorPrivacyManager::TOGGLE_TYPE_HARDWARE,
+-                            SensorPrivacyManager::TOGGLE_SENSOR_MICROPHONE);
+-    spm.addToggleSensorPrivacyListener(this);
++    // picodroid: no system_server — no sensor_privacy service to query or listen to.
+ }
+ 
+ void SensorService::MicrophonePrivacyPolicy::unregisterSelf() {
+-    AutoCallerClear acc;
+-    SensorPrivacyManager spm;
+-    spm.removeToggleSensorPrivacyListener(this);
++    // picodroid: no system_server — nothing was registered.
+ }
+ 
+ binder::Status SensorService::MicrophonePrivacyPolicy::onSensorPrivacyChanged(int toggleType __unused,
+@@ -3050,16 +2954,8 @@ SensorService::ConnectionSafeAutolock SensorService::SensorConnectionHolder::loc
+ }
+ 
+ bool SensorService::isPackageDebuggable(const String16& opPackageName) {
+-    bool debugMode = false;
+-    sp<IBinder> binder = defaultServiceManager()->getService(String16("package_native"));
+-    if (binder != nullptr) {
+-        sp<content::pm::IPackageManagerNative> packageManager =
+-                interface_cast<content::pm::IPackageManagerNative>(binder);
+-        if (packageManager != nullptr) {
+-            binder::Status status = packageManager->isPackageDebuggable(
+-                opPackageName, &debugMode);
+-        }
+-    }
+-    return debugMode;
++    // picodroid: no system_server — no PackageManagerNative; packages are never debuggable.
++    (void)opPackageName;
++    return false;
+ }
+ } // namespace android

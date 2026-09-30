@@ -1,0 +1,147 @@
+# picodroid userdata 挂载契约（挂载重构终版，2026-09-30 用户多轮裁定定稿）。
+#
+# 架构：fstab 单条目标准形态挂 /data（rootdir/fstab.picodroid，prebuilt_etc 装入
+# /system/etc/fstab.picodroid；文件名不等于 fstab.<suffix>，不会被任何一方当默认表）；
+# DSU 态换源走系统原生 TransformFstabForDsu（对 mount_all 显式路径同样生效，
+# libfstab/fstab.cpp:676-690；:559-571 把 /data 条目 blk_device 改写为 userdata_gsi
+# 并强置 logical+formattable → fs_mgr.cpp:1192-1208 按名解析出 mapper/userdata_gsi）。
+# 挂载后 hook 用 move mount 把 /data 移到 /userdata（rc mount builtin 无 move 旗标，
+# builtins.cpp:465-483；toybox mount 支持 -o move，toys/lsb/mount.c:115 → 必须在
+# shell 服务里做——这正是 hook 存在的理由），再建 /userdata/boot 子目录 bind 回
+# /data（boot=容器启动环境驱动的 picodroid 专数据区；userdata 后续装载 Linux
+# rootfs，命名避免容器应用错误清理）。hook2 于 late-fs 清宿主 mount_all --late 叠挂、
+# 校验拓扑（/data 源=/userdata/boot、/userdata 为 ext4）后置 picodroid.data.ready=1。
+#
+# 核心原则——合法 ext4 盘永不格式化：provision 只对"非 ext4 盘"清零首 4096 字节，
+# 交标准 wiped→formattable→fs_mgr_do_format 的 mke2fs+e2fsdroid（脚本无任何 mke2fs）；
+# 禁止依赖标记文件做清零判断；boot 目录缺失只由 hook 的 mkdir 幂等重建。DSU 态
+# gsid 安装期已清零 userdata_gsi 首 4K（partition_installer.cpp:301-325），零接触。
+#
+# 拓扑时序：early-fs（provision → mount_all → hook）在 on fs 之前完成标准挂载+
+# move+bind；late-fs（hook2）在宿主 vendor rc 的 mount_all --late（init.rc:10 先于
+# 本文件解析注册，同触发器先执行）之后清叠挂；post-fs-data 的全套 /data mkdir 落在
+# bind 之上（即 /userdata/boot 内），行为与 stock 一致。
+# 失败语义：exec_start 同步等待（apexd-bootstrap 同款模式）；服务以 su 域执行
+# （userdebug permissive，具备 mount 能力；M5 移除 SELinux 后不受影响）。任一
+# 子命令 FATAL exit 1 时 init 记错误日志（android17 中 action 后续命令不因此中断，
+# 终态收敛一致：挂载链断 → /data 拓扑不成立 → data.ready 不置位 → launcher 不运行）。
+
+# 无 vold：抢先固化加密属性（ro. 先到先得），阻止 fs_mgr 按 fstab 的 fileencryption
+# 标志置 file/encrypted —— IsFbeEnabled() 为假后，init 的 mkdir encryption= 策略分支
+# （builtins.cpp FscryptSetDirectoryPolicy 失败即 reboot recovery）整体跳过。
+# （fstab.picodroid 本身零加密标志：mount_all 返回 NOT_ENCRYPTABLE，queue_fs_event
+# 对已固化的 ro.crypto.state 无影响，并按 stock 语义补触发 nonencrypted。）
+on early-init
+    # 最小启动总开关（平台补丁 0013）：builtins do_class_start 读到 minimal 即短路返回，
+    # stock/vendor rc 全部 class_start（core/main/hal/early_hal/late_start/charger）失效；
+    # 显式 start / exec_start / restart / ctl.start 不受影响——白名单见文件末尾。
+    setprop picodroid.boot.profile minimal
+    setprop ro.crypto.type none
+    setprop ro.crypto.state unsupported
+
+# 挂载主体：default 模式单次挂载（无 --early/--late，fstab 条目亦无 latemount）。
+on early-fs
+    exec_start picodroid-userdata-provision
+    mount_all /system/etc/fstab.picodroid
+    exec_start picodroid-userdata-hook
+on late-fs
+    exec_start picodroid-userdata-hook2
+
+# 三个同步服务：同脚本同 seclabel，仅子命令不同（provision/hook/hook2）；
+# exec_start 同步等待服务退出的模式保持不变（apexd-bootstrap 同款）。
+service picodroid-userdata-provision /system/bin/sh /system/bin/picodroid-userdata provision
+    user root
+    group root
+    seclabel u:r:su:s0
+    disabled
+    oneshot
+
+service picodroid-userdata-hook /system/bin/sh /system/bin/picodroid-userdata hook
+    user root
+    group root
+    seclabel u:r:su:s0
+    disabled
+    oneshot
+
+service picodroid-userdata-hook2 /system/bin/sh /system/bin/picodroid-userdata hook2
+    user root
+    group root
+    seclabel u:r:su:s0
+    disabled
+    oneshot
+
+# android17 将 sensorservice 宿主移入 system_server（上游无独立 rc）；picodroid 以独立
+# 进程拉起（M5 期以 su 域运行——permissive，可注册 sensorservice 服务并访问 sensor HAL；
+# 专属 sepolicy 域后续补）。其 system_server 依赖已由补丁 0009 拆除。
+service sensorservice /system/bin/sensorservice
+    user root
+    group root readproc
+    seclabel u:r:su:s0
+    class main
+    # 最小启动：disabled —— 不自动起（class main 本已被 0013 门控，此处双保险），
+    # 由 launcher 的 service::sensorservice 依赖按需 ctl.start 拉起。
+    disabled
+
+# 无 vold：stock 的 nonencrypted 触发只来自 mount_all 的 fs 事件路径（实测 Invalid code -1
+# 失败），class main / late_start 永不启动（mediaserver/sensorservice 等缺席）。
+# 我们已把 ro.crypto.state 固化为 unsupported（非加密态），此处按 stock 语义补触发
+# （minimal 模式下其内部 class_start main/late_start 已被 0013 门控短路；保留触发器
+# 以便关闭 minimal profile 时 stock 语义完整。early-fs 的 mount_all 亦会按 stock
+# 路径 queue_fs_event(nonencrypted)，幂等）。
+on boot
+    trigger nonencrypted
+
+# M4：picodroid-launcher（PLAN §7 契约：/data/app 拓扑拉起）在数据就绪后运行；
+# 完成（含 sys.boot_completed 置位与 cvd 看门狗标记——无 Java 框架，stock 由
+# GCEService 上报，此处按 minidroid 先例由 launcher 代办）。
+service picodroid-launcher /system/bin/sh /system/bin/picodroid-launcher
+    user root
+    group root
+    seclabel u:r:su:s0
+    disabled
+    oneshot
+
+on property:picodroid.data.ready=1
+    # 温控/调度基础设施开机必拉（用户决策）：thermal HAL 是 camera HAL open 的
+    # 阻塞依赖（实测死等 IThermal/default 600s）；suspend 服务是 audioserver 的
+    # 阻塞依赖（wakelock）。二者属"基础设施"而非按需服务，进开机白名单。
+    start vendor.thermal-example
+    start system_suspend
+    exec_start picodroid-launcher
+    setprop dev.bootcomplete 1
+    setprop sys.boot_completed 1
+    write /dev/kmsg "VIRTUAL_DEVICE_BOOT_COMPLETED"
+    write /dev/kmsg "GUEST_BUILD_FINGERPRINT: ${ro.build.fingerprint}"
+
+# ===== 最小启动白名单（开机仅 adbd 及其硬依赖；链路逐项核实 2026-09-29，android17）=====
+# 以下均不依赖 class_start，0013 门控不影响：
+#   init       —— 本体。
+#   ueventd    —— init.rc on early-init 显式 `start ueventd`（非 class_start；virtio 等
+#                 /dev 节点 coldplug 必需，不能断——已核实无需补显式）。
+#   logd       —— init.rc on init 显式 `start logd`（先于 servicemanager；adb logcat 依赖，
+#                 已核实无需补显式）。
+#   servicemanager —— init.rc on init 显式 `start servicemanager`（同批 hwservicemanager /
+#                 vndservicemanager 也是显式 start，binder/HIDL 服务注册需要，一并保留）。
+#   apexd      —— early-init `exec_start apexd-bootstrap` + post-fs-data 显式 `restart apexd`
+#                 + `wait_for_prop apexd.status activated`；apexd.rc 三个服务本就 disabled
+#                 （从不随 class core 起）→ APEX 激活链路完整，无需补。
+#   linkerconfig —— /linkerconfig/* 由 builtin `perform_apex_config`（early-init 与
+#                 post-fs-data 显式调用）内的 GenerateLinkerConfiguration 生成，是命令非服务，
+#                 不受门控影响（已核实两处触发器均在）。
+#   adbd       —— 服务定义在 com.android.adbd apex 的 adbd.rc（class core + disabled +
+#                 override，压掉 init.usb.rc 的 /system/bin/adbd 版本）；apex rc 要到
+#                 perform_apex_config 时才解析入 init。stock 依赖 sys.usb.config 属性触发
+#                 `start adbd`（显式、不受门控），但触发早于 apex rc 解析时会落空——
+#                 在此于 apex 激活完成点兜底显式拉起（对已 running 幂等）：
+on property:apexd.status=activated
+    start adbd
+#
+# 验证清单（minimal 模式开机稳定后 `ps -A`，除内核线程外应只见）：
+#   init ueventd logd servicemanager hwservicemanager vndservicemanager adbd
+#   （apexd 为 oneshot 生命周期已退出）。
+# 已知残留（stock init.rc 显式 start，非 class，门控不减；如需再省另立开关）：
+#   tombstoned（post-fs-data 显式；崩溃诊断配套 debuggerd 保留）
+#   system_aconfigd_socket_service / mainline_aconfigd_*（post-fs-data 显式；flag 存储）
+#   console（仅 ro.debuggable=1 的 on init 分支）
+#   lmkd / vold 的显式 start 因二进制已裁，只剩 "no such service" 一行报错，无进程。
+# sensorservice 等 class main/hal 服务不应出现，直到 launcher 的 service:: 依赖拉起。

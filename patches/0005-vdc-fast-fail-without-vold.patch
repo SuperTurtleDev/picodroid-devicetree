@@ -1,0 +1,15 @@
+diff --git a/vdc.cpp b/vdc.cpp
+index 400bc5d..752d1c9 100644
+--- a/vdc.cpp
++++ b/vdc.cpp
+@@ -48,7 +48,9 @@ static android::sp<android::IBinder> getServiceAggressive() {
+     android::sp<android::IBinder> res;
+     auto sm = android::defaultServiceManager();
+     auto name = android::String16("vold");
+-    for (int i = 0; i < 5000; i++) {
++    // picodroid: vold is not present; fail fast instead of blocking the boot
++    // path (fs_mgr/init invoke vdc during mount_all) for 50 seconds.
++    for (int i = 0; i < 100; i++) {
+         res = sm->checkService(name);
+         if (res) {
+             LOG(VERBOSE) << "Waited " << (i * 10) << "ms for vold";

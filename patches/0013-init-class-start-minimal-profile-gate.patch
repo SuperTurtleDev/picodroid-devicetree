@@ -1,0 +1,30 @@
+From a5a4387cefe1f356350b8194898a5b834cab5a76 Mon Sep 17 00:00:00 2001
+From: picodroid-builder <builder@picodroid.local>
+Date: Wed, 30 Sep 2026 08:10:31 +0000
+Subject: [PATCH] picodroid: gate class_start behind
+ picodroid.boot.profile=minimal
+
+Change-Id: I66eb8a5823467943de571a448a70b09ef8c7e1d1
+---
+ init/builtins.cpp | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/init/builtins.cpp b/init/builtins.cpp
+index 2e4a3b4..975bdf9 100644
+--- a/init/builtins.cpp
++++ b/init/builtins.cpp
+@@ -165,6 +165,11 @@ static void ForEachServiceInClass(const std::string& classname, F function) {
+ }
+ 
+ static Result<void> do_class_start(const BuiltinArguments& args) {
++    // picodroid: minimal boot profile short-circuits every class_start; explicit start/ctl.start is unaffected.
++    if (android::base::GetProperty("picodroid.boot.profile", "") == "minimal") {
++        LOG(INFO) << "picodroid: minimal profile: skip class_start " << args[1];
++        return {};
++    }
+     // Do not start a class if it has a property persist.dont_start_class.CLASS set to 1.
+     if (android::base::GetBoolProperty("persist.init.dont_start_class." + args[1], false))
+         return {};
+-- 
+2.43.0
+

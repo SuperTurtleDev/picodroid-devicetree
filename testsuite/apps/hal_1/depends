@@ -1,0 +1,7 @@
+service::vendor.health-cuttlefish
+service::vendor.power.stats-default
+service::vendor.thermal-example
+service::vendor.vibrator-default
+service::vendor.memtrack-default
+service::vendor.keymint-default
+service::nfc_hal_service

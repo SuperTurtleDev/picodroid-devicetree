@@ -1,0 +1,12 @@
+diff --git a/private/file_contexts b/private/file_contexts
+index 56977a1..4591948 100644
+--- a/private/file_contexts
++++ b/private/file_contexts
+@@ -603,6 +603,7 @@
+ # NOTE: When modifying existing label rules, changes may also need to
+ # propagate to the "Expanded data files" section.
+ #
++/userdata		u:object_r:system_data_root_file:s0
+ /data		u:object_r:system_data_root_file:s0
+ /data/(.*)?		u:object_r:system_data_file:s0
+ /data/userdata_exp\.[^/]+ u:object_r:exp_partition_data_file:s0

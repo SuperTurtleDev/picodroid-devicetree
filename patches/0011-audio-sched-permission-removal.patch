@@ -1,0 +1,843 @@
+diff --git a/libs/permission/AppOpsManager.cpp b/libs/permission/AppOpsManager.cpp
+index adfddd2..f695a24 100644
+--- a/libs/permission/AppOpsManager.cpp
++++ b/libs/permission/AppOpsManager.cpp
+@@ -19,8 +19,6 @@
+ #include <binder/Binder.h>
+ #include <binder/IServiceManager.h>
+ 
+-#include <utils/SystemClock.h>
+-
+ #include <sys/types.h>
+ #include <private/android_filesystem_config.h>
+ 
+@@ -52,25 +50,13 @@ sp<IAppOpsService> AppOpsManager::getService()
+     static String16 _appops("appops");
+ 
+     std::lock_guard<Mutex> scoped_lock(mLock);
+-    int64_t startTime = 0;
++    // picodroid: no system_server — appops never exists; single non-blocking lookup,
++    // no sleep retry loop. Callers treat a null service as "default allowed".
+     sp<IAppOpsService> service = mService;
+-    while (service == nullptr || !IInterface::asBinder(service)->isBinderAlive()) {
++    if (service == nullptr || !IInterface::asBinder(service)->isBinderAlive()) {
+         sp<IBinder> binder = defaultServiceManager()->checkService(_appops);
+-        if (binder == nullptr) {
+-            // Wait for the app ops service to come back...
+-            if (startTime == 0) {
+-                startTime = uptimeMillis();
+-                ALOGI("Waiting for app ops service");
+-            } else if ((uptimeMillis()-startTime) > 10000) {
+-                ALOGW("Waiting too long for app ops service, giving up");
+-                service = nullptr;
+-                break;
+-            }
+-            sleep(1);
+-        } else {
+-            service = interface_cast<IAppOpsService>(binder);
+-            mService = service;
+-        }
++        service = binder != nullptr ? interface_cast<IAppOpsService>(binder) : nullptr;
++        mService = service;
+     }
+     return service;
+ }
+@@ -80,7 +66,7 @@ int32_t AppOpsManager::checkOp(int32_t op, int32_t uid, const String16& callingP
+     sp<IAppOpsService> service = getService();
+     return service != nullptr
+             ? service->checkOperation(op, uid, callingPackage)
+-            : AppOpsManager::MODE_IGNORED;
++            : AppOpsManager::MODE_ALLOWED;
+ }
+ 
+ int32_t AppOpsManager::checkAudioOpNoThrow(int32_t op, int32_t usage, int32_t uid,
+@@ -88,7 +74,7 @@ int32_t AppOpsManager::checkAudioOpNoThrow(int32_t op, int32_t usage, int32_t ui
+     sp<IAppOpsService> service = getService();
+     return service != nullptr
+            ? service->checkAudioOperation(op, usage, uid, callingPackage)
+-           : AppOpsManager::MODE_IGNORED;
++           : AppOpsManager::MODE_ALLOWED;
+ }
+ 
+ int32_t AppOpsManager::noteOp(int32_t op, int32_t uid, const String16& callingPackage) {
+@@ -99,10 +85,11 @@ int32_t AppOpsManager::noteOp(int32_t op, int32_t uid, const String16& callingPa
+ int32_t AppOpsManager::noteOp(int32_t op, int32_t uid, const String16& callingPackage,
+         const std::optional<String16>& attributionTag, const String16& message) {
+     sp<IAppOpsService> service = getService();
++    // picodroid: no system_server — appops never exists, default allowed.
+     int32_t mode = service != nullptr
+             ? service->noteOperation(op, uid, callingPackage, attributionTag,
+                     shouldCollectNotes(op), message, uid == AID_SYSTEM)
+-            : AppOpsManager::MODE_IGNORED;
++            : AppOpsManager::MODE_ALLOWED;
+ 
+     return mode;
+ }
+@@ -117,11 +104,12 @@ int32_t AppOpsManager::startOpNoThrow(int32_t op, int32_t uid, const String16& c
+         bool startIfModeDefault, const std::optional<String16>& attributionTag,
+         const String16& message) {
+     sp<IAppOpsService> service = getService();
++    // picodroid: no system_server — appops never exists, default allowed.
+     int32_t mode = service != nullptr
+             ? service->startOperation(getClientId(), op, uid, callingPackage,
+                     attributionTag, startIfModeDefault, shouldCollectNotes(op), message,
+                     uid == AID_SYSTEM)
+-            : AppOpsManager::MODE_IGNORED;
++            : AppOpsManager::MODE_ALLOWED;
+ 
+     return mode;
+ }
+@@ -182,7 +170,9 @@ bool AppOpsManager::shouldCollectNotes(int32_t opcode) {
+     static uint8_t appOpsToNote[AppOpsManager::_NUM_OP] = {0};
+ 
+     if (appOpsToNote[opcode] == 0) {
+-        if (getService()->shouldCollectNotes(opcode)) {
++        // picodroid: no system_server — appops never exists, nothing to collect.
++        sp<IAppOpsService> service = getService();
++        if (service != nullptr && service->shouldCollectNotes(opcode)) {
+             appOpsToNote[opcode] = 2;
+         } else {
+             appOpsToNote[opcode] = 1;
+@@ -197,9 +187,10 @@ int32_t AppOpsManager::checkOperationForDevice(int32_t op, int32_t uid,
+                                                const std::optional<String16>& attributionTag,
+                                                int32_t virtualDeviceId) {
+     sp<IAppOpsService> service = getService();
++    // picodroid: no system_server — appops never exists, default allowed.
+     return service != nullptr ? service->checkOperationForDevice(op, uid, callingPackage,
+                                                                  attributionTag, virtualDeviceId)
+-                              : AppOpsManager::MODE_IGNORED;
++                              : AppOpsManager::MODE_ALLOWED;
+ }
+ 
+ } // namespace android
+diff --git a/media/libaudiopermission/NativePermissionController.cpp b/media/libaudiopermission/NativePermissionController.cpp
+index a61ad05..606c7d4 100644
+--- a/media/libaudiopermission/NativePermissionController.cpp
++++ b/media/libaudiopermission/NativePermissionController.cpp
+@@ -131,10 +131,10 @@ BinderResult<std::vector<std::string>> NativePermissionController::getPackagesFo
+                                                       {fixed_package_opt.value()}};
+     }
+     std::lock_guard l{m_};
++    // picodroid: no system_server — never populated, synthesize "uid-<uid>" for any uid.
+     if (!is_package_populated_) {
+-        return unexpectedExceptionCode(
+-                Status::EX_ILLEGAL_STATE,
+-                "NPC::getPackagesForUid: controller never populated by system_server");
++        return BinderResult<std::vector<std::string>>{std::in_place_t{},
++                                                      {"uid-" + std::to_string(uid)}};
+     }
+     const auto cursor = package_map_.find(uid);
+     if (cursor != package_map_.end()) {
+@@ -160,11 +160,8 @@ BinderResult<bool> NativePermissionController::validateUidPackagePair(
+                                                       : packageName == fixed_package_opt.value();
+     }
+     std::lock_guard l{m_};
+-    if (!is_package_populated_) {
+-        return unexpectedExceptionCode(
+-                Status::EX_ILLEGAL_STATE,
+-                "NPC::validateUidPackagePair: controller never populated by system_server");
+-    }
++    // picodroid: no system_server — never populated, any uid/package pair is valid.
++    if (!is_package_populated_) return true;
+ 
+     auto cursor = package_map_.find(uid);
+ 
+@@ -198,19 +195,18 @@ BinderResult<bool> NativePermissionController::checkPermission(PermissionEnum pe
+         ALOGV_IF(!ret, "%s: missing %d for %u", __func__, static_cast<int>(perm), uid);
+         return ret;
+     } else {
+-        return unexpectedExceptionCode(
+-                Status::EX_ILLEGAL_STATE,
+-                "NPC::checkPermission: controller never populated by system_server");
++        // picodroid: no system_server — permission map never populated, default allowed.
++        return true;
+     }
+ }
+ 
+ BinderResult<int32_t> NativePermissionController::getHighestTargetSdkForUid(uid_t uid) const {
+     uid = uid % AID_USER_OFFSET;
+     std::lock_guard l{m_};
++    // picodroid: no system_server — never populated, report a recent SDK so callers avoid
++    // legacy restricted branches.
+     if (!is_package_populated_) {
+-        return unexpectedExceptionCode(
+-                Status::EX_ILLEGAL_STATE,
+-                "NPC::getHighestTargetSdkForUid: controller never populated by system_server");
++        return BinderResult<int32_t>{std::in_place_t{}, 10000};
+     }
+     const auto cursor = package_map_.find(uid);
+     if (cursor != package_map_.end()) {
+diff --git a/media/libaudiopermission/ValidatedAttributionSourceState.cpp b/media/libaudiopermission/ValidatedAttributionSourceState.cpp
+index f313422..f108f24 100644
+--- a/media/libaudiopermission/ValidatedAttributionSourceState.cpp
++++ b/media/libaudiopermission/ValidatedAttributionSourceState.cpp
+@@ -51,9 +51,14 @@ ValidatedAttributionSourceState::createFromTrustedUidNoPackage(
+         // For APIs which don't appropriately pass attribution sources or packages, we need
+         // to populate the package name with our best guess.
+         const auto packageNames = VALUE_OR_RETURN(provider.getPackagesForUid(attr.uid));
+-        LOG_ALWAYS_FATAL_IF(packageNames.empty(), "%s BUG: empty package list from controller",
+-                            __PRETTY_FUNCTION__);
+-        attr.packageName = std::move(packageNames[0]);
++        // picodroid: no system_server — never abort on an empty package list, synthesize one.
++        if (packageNames.empty()) {
++            ALOGW("%s: empty package list for uid %d, using synthetic package name",
++                  __PRETTY_FUNCTION__, attr.uid);
++            attr.packageName = "uid-" + std::to_string(attr.uid);
++        } else {
++            attr.packageName = std::move(packageNames[0]);
++        }
+         return ValidatedAttributionSourceState{std::move(attr)};
+     }
+ }
+diff --git a/media/utils/BatteryNotifier.cpp b/media/utils/BatteryNotifier.cpp
+index 7762c24..ab2449a 100644
+--- a/media/utils/BatteryNotifier.cpp
++++ b/media/utils/BatteryNotifier.cpp
+@@ -25,204 +25,35 @@
+ 
+ namespace android {
+ 
+-void BatteryNotifier::DeathNotifier::binderDied(const wp<IBinder>& /*who*/) {
+-    BatteryNotifier::getInstance().onBatteryStatServiceDied();
+-}
++// picodroid: no system_server — batterystats never exists; all battery accounting is no-op.
+ 
+ BatteryNotifier::BatteryNotifier() {}
+ 
+-BatteryNotifier::~BatteryNotifier() {
+-    Mutex::Autolock _l(mLock);
+-    if (mDeathNotifier != nullptr) {
+-        IInterface::asBinder(mBatteryStatService)->unlinkToDeath(mDeathNotifier);
+-    }
+-}
+-
+-void BatteryNotifier::noteStartVideo(uid_t uid) {
+-    Mutex::Autolock _l(mLock);
+-    sp<IBatteryStats> batteryService = getBatteryService_l();
+-    if (mVideoRefCounts[uid] == 0 && batteryService != nullptr) {
+-        batteryService->noteStartVideo(uid);
+-    }
+-    mVideoRefCounts[uid]++;
+-}
+-
+-void BatteryNotifier::noteStopVideo(uid_t uid) {
+-    Mutex::Autolock _l(mLock);
+-    if (mVideoRefCounts.find(uid) == mVideoRefCounts.end()) {
+-        ALOGW("%s: video refcount is broken for uid(%d).", __FUNCTION__, (int)uid);
+-        return;
+-    }
+-
+-    sp<IBatteryStats> batteryService = getBatteryService_l();
+-
+-    mVideoRefCounts[uid]--;
+-    if (mVideoRefCounts[uid] == 0) {
+-        if (batteryService != nullptr) {
+-            batteryService->noteStopVideo(uid);
+-        }
+-        mVideoRefCounts.erase(uid);
+-    }
+-}
+-
+-void BatteryNotifier::noteResetVideo() {
+-    Mutex::Autolock _l(mLock);
+-    sp<IBatteryStats> batteryService = getBatteryService_l();
+-    mVideoRefCounts.clear();
+-    if (batteryService != nullptr) {
+-        batteryService->noteResetVideo();
+-    }
+-}
+-
+-void BatteryNotifier::noteStartAudio(uid_t uid) {
+-    Mutex::Autolock _l(mLock);
+-    sp<IBatteryStats> batteryService = getBatteryService_l();
+-    if (mAudioRefCounts[uid] == 0 && batteryService != nullptr) {
+-        batteryService->noteStartAudio(uid);
+-    }
+-    mAudioRefCounts[uid]++;
+-}
+-
+-void BatteryNotifier::noteStopAudio(uid_t uid) {
+-    Mutex::Autolock _l(mLock);
+-    if (mAudioRefCounts.find(uid) == mAudioRefCounts.end() || (mAudioRefCounts[uid] == 0)) {
+-        ALOGE("%s: audio refcount is broken for uid(%d).", __FUNCTION__, (int)uid);
+-        return;
+-    }
+-
+-    sp<IBatteryStats> batteryService = getBatteryService_l();
+-
+-    mAudioRefCounts[uid]--;
+-    if (mAudioRefCounts[uid] == 0) {
+-        if (batteryService != nullptr) {
+-            batteryService->noteStopAudio(uid);
+-        }
+-        mAudioRefCounts.erase(uid);
+-    }
+-}
+-
+-void BatteryNotifier::noteResetAudio() {
+-    Mutex::Autolock _l(mLock);
+-    sp<IBatteryStats> batteryService = getBatteryService_l();
+-    mAudioRefCounts.clear();
+-    if (batteryService != nullptr) {
+-        batteryService->noteResetAudio();
+-    }
+-}
+-
+-void BatteryNotifier::noteFlashlightOn(const String8& id, uid_t uid) {
+-    Mutex::Autolock _l(mLock);
+-    sp<IBatteryStats> batteryService = getBatteryService_l();
+-
+-    std::pair<String8, uid_t> k = std::make_pair(id, uid);
+-    if (!mFlashlightState[k]) {
+-        mFlashlightState[k] = true;
+-        if (batteryService != nullptr) {
+-            batteryService->noteFlashlightOn(uid);
+-        }
+-    }
+-}
+-
+-void BatteryNotifier::noteFlashlightOff(const String8& id, uid_t uid) {
+-    Mutex::Autolock _l(mLock);
+-    sp<IBatteryStats> batteryService = getBatteryService_l();
+-
+-    std::pair<String8, uid_t> k = std::make_pair(id, uid);
+-    if (mFlashlightState[k]) {
+-        mFlashlightState[k] = false;
+-        if (batteryService != nullptr) {
+-            batteryService->noteFlashlightOff(uid);
+-        }
+-    }
+-}
+-
+-void BatteryNotifier::noteResetFlashlight() {
+-    Mutex::Autolock _l(mLock);
+-    sp<IBatteryStats> batteryService = getBatteryService_l();
+-    mFlashlightState.clear();
+-    if (batteryService != nullptr) {
+-        batteryService->noteResetFlashlight();
+-    }
+-}
+-
+-void BatteryNotifier::noteStartCamera(const String8& id, uid_t uid) {
+-    Mutex::Autolock _l(mLock);
+-    sp<IBatteryStats> batteryService = getBatteryService_l();
+-    std::pair<String8, uid_t> k = std::make_pair(id, uid);
+-    if (!mCameraState[k]) {
+-        mCameraState[k] = true;
+-        if (batteryService != nullptr) {
+-            batteryService->noteStartCamera(uid);
+-        }
+-    }
+-}
+-
+-void BatteryNotifier::noteStopCamera(const String8& id, uid_t uid) {
+-    Mutex::Autolock _l(mLock);
+-    sp<IBatteryStats> batteryService = getBatteryService_l();
+-    std::pair<String8, uid_t> k = std::make_pair(id, uid);
+-    if (mCameraState[k]) {
+-        mCameraState[k] = false;
+-        if (batteryService != nullptr) {
+-            batteryService->noteStopCamera(uid);
+-        }
+-    }
+-}
+-
+-void BatteryNotifier::noteResetCamera() {
+-    Mutex::Autolock _l(mLock);
+-    sp<IBatteryStats> batteryService = getBatteryService_l();
+-    mCameraState.clear();
+-    if (batteryService != nullptr) {
+-        batteryService->noteResetCamera();
+-    }
+-}
+-
+-void BatteryNotifier::onBatteryStatServiceDied() {
+-    Mutex::Autolock _l(mLock);
+-    mBatteryStatService.clear();
+-    mDeathNotifier.clear();
+-    // Do not reset mVideoRefCounts and mAudioRefCounts here. The ref
+-    // counting is independent of the battery service availability.
+-    // We need this if battery service becomes available after media
+-    // started.
+-
+-}
+-
+-sp<IBatteryStats> BatteryNotifier::getBatteryService_l() {
+-    if (mBatteryStatService != nullptr) {
+-        return mBatteryStatService;
+-    }
+-    // Get battery service from service manager
+-    const sp<IServiceManager> sm(defaultServiceManager());
+-    if (sm != nullptr) {
+-        const String16 name("batterystats");
+-        mBatteryStatService = interface_cast<IBatteryStats>(sm->checkService(name));
+-        if (mBatteryStatService == nullptr) {
+-            // this may occur normally during the init sequence as mediaserver
+-            // and audioserver start before the batterystats service is available.
+-            ALOGW("batterystats service unavailable!");
+-            return nullptr;
+-        }
+-
+-        mDeathNotifier = new DeathNotifier();
+-        IInterface::asBinder(mBatteryStatService)->linkToDeath(mDeathNotifier);
+-
+-        // Notify start now if mediaserver or audioserver is already started.
+-        // 1) mediaserver and audioserver is started before batterystats service
+-        // 2) batterystats server may have crashed.
+-        std::map<uid_t, int>::iterator it = mVideoRefCounts.begin();
+-        for (; it != mVideoRefCounts.end(); ++it) {
+-            mBatteryStatService->noteStartVideo(it->first);
+-        }
+-        it = mAudioRefCounts.begin();
+-        for (; it != mAudioRefCounts.end(); ++it) {
+-            mBatteryStatService->noteStartAudio(it->first);
+-        }
+-        // TODO: Notify for camera and flashlight state as well?
+-    }
+-    return mBatteryStatService;
+-}
++BatteryNotifier::~BatteryNotifier() {}
++
++void BatteryNotifier::noteStartVideo(uid_t /*uid*/) {}
++
++void BatteryNotifier::noteStopVideo(uid_t /*uid*/) {}
++
++void BatteryNotifier::noteResetVideo() {}
++
++void BatteryNotifier::noteStartAudio(uid_t /*uid*/) {}
++
++void BatteryNotifier::noteStopAudio(uid_t /*uid*/) {}
++
++void BatteryNotifier::noteResetAudio() {}
++
++void BatteryNotifier::noteFlashlightOn(const String8& /*id*/, uid_t /*uid*/) {}
++
++void BatteryNotifier::noteFlashlightOff(const String8& /*id*/, uid_t /*uid*/) {}
++
++void BatteryNotifier::noteResetFlashlight() {}
++
++void BatteryNotifier::noteStartCamera(const String8& /*id*/, uid_t /*uid*/) {}
++
++void BatteryNotifier::noteStopCamera(const String8& /*id*/, uid_t /*uid*/) {}
++
++void BatteryNotifier::noteResetCamera() {}
+ 
+ ANDROID_SINGLETON_STATIC_INSTANCE(BatteryNotifier);
+ 
+diff --git a/media/utils/SchedulingPolicyService.cpp b/media/utils/SchedulingPolicyService.cpp
+index 5f65067..6c4451c 100644
+--- a/media/utils/SchedulingPolicyService.cpp
++++ b/media/utils/SchedulingPolicyService.cpp
+@@ -21,6 +21,7 @@
+ #include <binder/IServiceManager.h>
+ #include <cutils/android_filesystem_config.h>
+ #include <cutils/properties.h>
++#include <utils/Errors.h>
+ #include <utils/Mutex.h>
+ #include "ISchedulingPolicyService.h"
+ #include "mediautils/SchedulingPolicyService.h"
+@@ -31,44 +32,21 @@ static sp<ISchedulingPolicyService> sSchedulingPolicyService;
+ static const String16 _scheduling_policy("scheduling_policy");
+ static Mutex sMutex;
+ 
+-int requestPriority(pid_t pid, pid_t tid, int32_t prio, bool isForApp, bool asynchronous)
++int requestPriority(pid_t pid, pid_t tid, int32_t prio, bool /*isForApp*/, bool /*asynchronous*/)
+ {
+-    // audioserver thread priority boosted internally to reduce binder latency and boot time.
+-    if (!isForApp && pid == getpid() && getuid() == AID_AUDIOSERVER && prio >= 1 && prio <= 3) {
++    // picodroid: no system_server — scheduling_policy never exists: boost our own threads
++    // locally (no binder), deny cross-process requests, never sleep-loop on service lookup.
++    if (pid == getpid() && prio >= 1 && prio <= 99) {
+         const status_t status = audio_utils::set_thread_priority(
+                 tid, audio_utils::rtprio_to_unified_priority(prio));
+         if (status == NO_ERROR) return NO_ERROR;
+-        ALOGD("%s: set priority %d, status:%d needs to fallback to SchedulingPolicyService",
+-                __func__, prio, status);
++        ALOGW("%s: local set_thread_priority failed for tid %d prio %d, status %d",
++                __func__, tid, prio, status);
++        return PERMISSION_DENIED;
+     }
+-
+-    // FIXME merge duplicated code related to service lookup, caching, and error recovery
+-    int ret;
+-    for (;;) {
+-        sMutex.lock();
+-        sp<ISchedulingPolicyService> sps = sSchedulingPolicyService;
+-        sMutex.unlock();
+-        if (sps == 0) {
+-            sp<IBinder> binder = defaultServiceManager()->checkService(_scheduling_policy);
+-            if (binder == 0) {
+-                sleep(1);
+-                continue;
+-            }
+-            sps = interface_cast<ISchedulingPolicyService>(binder);
+-            sMutex.lock();
+-            sSchedulingPolicyService = sps;
+-            sMutex.unlock();
+-        }
+-        ret = sps->requestPriority(pid, tid, prio, isForApp, asynchronous);
+-        if (ret != DEAD_OBJECT) {
+-            break;
+-        }
+-        ALOGW("SchedulingPolicyService died");
+-        sMutex.lock();
+-        sSchedulingPolicyService.clear();
+-        sMutex.unlock();
+-    }
+-    return ret;
++    ALOGW("%s: denying request for pid %d tid %d prio %d (no system_server)",
++            __func__, pid, tid, prio);
++    return PERMISSION_DENIED;
+ }
+ 
+ int requestCpusetBoost(bool enable, const sp<IBinder> &client)
+diff --git a/services/audioflinger/PlaybackTracks.h b/services/audioflinger/PlaybackTracks.h
+index 5a402e1..0f3fc39 100644
+--- a/services/audioflinger/PlaybackTracks.h
++++ b/services/audioflinger/PlaybackTracks.h
+@@ -23,54 +23,11 @@
+ #include <audio_utils/mutex.h>
+ #include <audio_utils/LinearMap.h>
+ #include <com_android_media_audio.h>
+-#include <binder/AppOpsManager.h>
+ #include <utils/RWLock.h>
+ 
+ namespace android {
+ 
+-// Checks and monitors OP_PLAY_AUDIO
+-class OpPlayAudioMonitor : public RefBase {
+-    friend class sp<OpPlayAudioMonitor>;
+-public:
+-    ~OpPlayAudioMonitor() override;
+-    bool hasOpPlayAudio() const;
+-
+-    static sp<OpPlayAudioMonitor> createIfNeeded(
+-            IAfThreadBase* thread,
+-            const AttributionSourceState& attributionSource,
+-            const audio_attributes_t& attr, int id,
+-            audio_stream_type_t streamType);
+-
+-private:
+-    OpPlayAudioMonitor(IAfThreadBase* thread,
+-                       const AttributionSourceState& attributionSource,
+-                       audio_usage_t usage, int id, uid_t uid);
+-    void onFirstRef() override;
+-
+-    AppOpsManager mAppOpsManager;
+-
+-    class PlayAudioOpCallback : public com::android::internal::app::BnAppOpsCallback {
+-    public:
+-        explicit PlayAudioOpCallback(const wp<OpPlayAudioMonitor>& monitor);
+-        binder::Status opChanged(int32_t op, int32_t uid, const String16& packageName,
+-                                 const String16& persistentDeviceId) override;
+-
+-    private:
+-        const wp<OpPlayAudioMonitor> mMonitor;
+-    };
+-
+-    sp<PlayAudioOpCallback> mOpCallback;
+-    // called by PlayAudioOpCallback when OP_PLAY_AUDIO is updated in AppOp callback
+-    void checkPlayAudioForUsage(bool doBroadcast);
+-
+-    wp<IAfThreadBase> mThread;
+-    std::atomic_bool mHasOpPlayAudio;
+-    const int32_t mUsage;  // on purpose not audio_usage_t because always checked in appOps as
+-                           // int32_t
+-    const int mId; // for logging purposes only
+-    const uid_t mUid;
+-    const String16 mPackageName;
+-};
++// picodroid: no system_server — OpPlayAudioMonitor removed, OP_PLAY_AUDIO is always allowed.
+ 
+ // playback track
+ class Track : public TrackBase, public virtual IAfTrack, public VolumeProvider {
+@@ -283,10 +240,8 @@ protected:
+     int& fastIndex() final { return mFastIndex; }
+ 
+     bool isPlaybackRestrictedOp() const final {
+-        // The monitor is only created for tracks that can be silenced.
+-        return mOpPlayAudioMonitor
+-                       ? !mOpPlayAudioMonitor->hasOpPlayAudio()
+-                       : false;
++        // picodroid: no system_server — OP_PLAY_AUDIO monitor removed, never restricted.
++        return false;
+     }
+ 
+     bool isPlaybackRestricted() const final {
+@@ -352,8 +307,6 @@ protected:
+ 
+     sp<media::VolumeHandler>  mVolumeHandler; // handles multiple VolumeShaper configs and operations
+ 
+-    sp<OpPlayAudioMonitor>  mOpPlayAudioMonitor;
+-
+     bool                mHapticPlaybackEnabled = false; // indicates haptic playback enabled or not
+     // scale to play haptic data
+     os::HapticScale mHapticScale = os::HapticScale::mute();
+diff --git a/services/audioflinger/Tracks.cpp b/services/audioflinger/Tracks.cpp
+index b7b9231..bb593e7 100644
+--- a/services/audioflinger/Tracks.cpp
++++ b/services/audioflinger/Tracks.cpp
+@@ -31,6 +31,7 @@
+ #include <android/media/IAudioPolicyService.h>
+ #include <audio_utils/StringUtils.h>
+ #include <audio_utils/minifloat.h>
++#include <binder/AppOpsManager.h>
+ #include <com_android_media_audio.h>
+ #include <com_android_media_audioserver.h>
+ #include <media/AppOpsSession.h>
+@@ -718,121 +719,8 @@ Status TrackHandle::setPlaybackRateParameters(
+ // ----------------------------------------------------------------------------
+ //      AppOp for audio playback
+ // -------------------------------
+-
+-// static
+-sp<OpPlayAudioMonitor> OpPlayAudioMonitor::createIfNeeded(
+-            IAfThreadBase* thread,
+-            const AttributionSourceState& attributionSource, const audio_attributes_t& attr, int id,
+-            audio_stream_type_t streamType)
+-{
+-    const uid_t uid = attributionSource.uid;
+-
+-    if (isServiceUid(uid)) {
+-        const auto res = thread->afThreadCallback()->getPermissionProvider().getPackagesForUid(uid);
+-        if (res.ok() && res->empty()) {
+-            ALOGW("OpPlayAudio: not muting track:%d usage:%d for service UID %d", id, attr.usage,
+-              uid);
+-        }
+-        return nullptr;
+-    }
+-    // stream type has been filtered by audio policy to indicate whether it can be muted
+-    if (streamType == AUDIO_STREAM_ENFORCED_AUDIBLE) {
+-        ALOGD("OpPlayAudio: not muting track:%d usage:%d ENFORCED_AUDIBLE", id, attr.usage);
+-        return nullptr;
+-    }
+-    if ((attr.flags & AUDIO_FLAG_BYPASS_INTERRUPTION_POLICY)
+-            == AUDIO_FLAG_BYPASS_INTERRUPTION_POLICY) {
+-        ALOGD("OpPlayAudio: not muting track:%d flags %#x have FLAG_BYPASS_INTERRUPTION_POLICY",
+-            id, attr.flags);
+-        return nullptr;
+-    }
+-    if (com_android_media_audio_ring_my_car()) {
+-        if ((attr.flags & AUDIO_FLAG_BYPASS_MUTE) == AUDIO_FLAG_BYPASS_MUTE) {
+-            ALOGD("OpPlayAudio: not muting track:%d flags %#x have FLAG_BYPASS_MUTE",
+-                  id, attr.flags);
+-            return nullptr;
+-        }
+-    }
+-    return sp<OpPlayAudioMonitor>::make(thread, attributionSource, attr.usage, id, uid);
+-}
+-
+-OpPlayAudioMonitor::OpPlayAudioMonitor(IAfThreadBase* thread,
+-                                       const AttributionSourceState& attributionSource,
+-                                       audio_usage_t usage, int id, uid_t uid)
+-    : mThread(wp<IAfThreadBase>::fromExisting(thread)),
+-      mHasOpPlayAudio(true),
+-      mUsage((int32_t)usage),
+-      mId(id),
+-      mUid(uid),
+-      mPackageName(VALUE_OR_FATAL(aidl2legacy_string_view_String16(
+-                  attributionSource.packageName.value_or("")))) {}
+-
+-OpPlayAudioMonitor::~OpPlayAudioMonitor()
+-{
+-    if (mOpCallback != 0) {
+-        mAppOpsManager.stopWatchingMode(mOpCallback);
+-    }
+-    mOpCallback.clear();
+-}
+-
+-void OpPlayAudioMonitor::onFirstRef()
+-{
+-    // make sure not to broadcast the initial state since it is not needed and could
+-    // cause a deadlock since this method can be called with the mThread->mLock held
+-    checkPlayAudioForUsage(/*doBroadcast=*/false);
+-    if (mPackageName.size()) {
+-        mOpCallback = new PlayAudioOpCallback(this);
+-        mAppOpsManager.startWatchingMode(AppOpsManager::OP_PLAY_AUDIO, mPackageName, mOpCallback);
+-    } else {
+-        ALOGW("Skipping OpPlayAudioMonitor due to null package name");
+-    }
+-}
+-
+-bool OpPlayAudioMonitor::hasOpPlayAudio() const {
+-    return mHasOpPlayAudio.load();
+-}
+-
+-// Note this method is never called (and never to be) for audio server / patch record track
+-// - not called from constructor due to check on UID,
+-// - not called from PlayAudioOpCallback because the callback is not installed in this case
+-void OpPlayAudioMonitor::checkPlayAudioForUsage(bool doBroadcast) {
+-    const bool hasAppOps =
+-            mPackageName.size() &&
+-            mAppOpsManager.checkAudioOpNoThrow(AppOpsManager::OP_PLAY_AUDIO, mUsage, mUid,
+-                                               mPackageName) == AppOpsManager::MODE_ALLOWED;
+-
+-    bool shouldChange = !hasAppOps;  // check if we need to update.
+-    if (mHasOpPlayAudio.compare_exchange_strong(shouldChange, hasAppOps)) {
+-        ALOGI("OpPlayAudio: track:%d package:%s usage:%d %smuted", mId,
+-              String8(mPackageName).c_str(), mUsage, hasAppOps ? "not " : "");
+-        if (doBroadcast) {
+-            auto thread = mThread.promote();
+-            if (thread != nullptr && thread->type() == IAfThreadBase::OFFLOAD) {
+-                // Wake up Thread if offloaded, otherwise it may be several seconds for update.
+-                audio_utils::lock_guard _l(thread->mutex());
+-                thread->broadcast_l();
+-            }
+-        }
+-    }
+-}
+-
+-OpPlayAudioMonitor::PlayAudioOpCallback::PlayAudioOpCallback(
+-        const wp<OpPlayAudioMonitor>& monitor) : mMonitor(monitor)
+-{ }
+-
+-binder::Status OpPlayAudioMonitor::PlayAudioOpCallback::opChanged(int32_t op, int32_t,
+-            const String16& packageName, const String16&) {
+-    if (op != AppOpsManager::OP_PLAY_AUDIO) {
+-        return binder::Status::ok();
+-    }
+-
+-    ALOGI("%s OP_PLAY_AUDIO callback received for %s", __func__, String8(packageName).c_str());
+-    sp<OpPlayAudioMonitor> monitor = mMonitor.promote();
+-    if (monitor != NULL) {
+-        monitor->checkPlayAudioForUsage(/*doBroadcast=*/true);
+-    }
+-    return binder::Status::ok();
+-}
++// picodroid: no system_server — OpPlayAudioMonitor removed; OP_PLAY_AUDIO is always
++// allowed, playback is never restricted by app ops and nothing is watched.
+ 
+ // ----------------------------------------------------------------------------
+ #undef LOG_TAG
+@@ -939,8 +827,6 @@ Track::Track(
+     mAuxEffectId(0), mHasVolumeController(false),
+     mFrameMap(16 /* sink-frame-to-track-frame map memory */),
+     mVolumeHandler(new media::VolumeHandler(sampleRate)),
+-    mOpPlayAudioMonitor(OpPlayAudioMonitor::createIfNeeded(thread, attributionSource, attr, id(),
+-        streamType)),
+     // mSinkTimestamp
+     mFastIndex(-1),
+     mCachedVolume(1.0),
+diff --git a/libs/permission/Android.bp b/libs/permission/Android.bp
+index 929f067..24ac279 100644
+--- a/libs/permission/Android.bp
++++ b/libs/permission/Android.bp
+@@ -47,7 +47,10 @@ cc_library {
+         "libcutils",
+         "liblog",
+     ],
+-    static_libs: [
++    // picodroid: whole-link so exported AIDL types (e.g. AttributionSourceState
++    // vtable) always land in libpermission.so even when local code no longer
++    // references them (downstream libmediautils links against it).
++    whole_static_libs: [
+         "framework-permission-aidl-cpp",
+     ],
+     export_static_lib_headers: [
+diff --git a/media/utils/SchedulingPolicyService.cpp b/media/utils/SchedulingPolicyService.cpp
+index 5f65067..f8cf2a0 100644
+--- a/media/utils/SchedulingPolicyService.cpp
++++ b/media/utils/SchedulingPolicyService.cpp
+@@ -21,6 +21,7 @@
+ #include <binder/IServiceManager.h>
+ #include <cutils/android_filesystem_config.h>
+ #include <cutils/properties.h>
++#include <utils/Errors.h>
+ #include <utils/Mutex.h>
+ #include "ISchedulingPolicyService.h"
+ #include "mediautils/SchedulingPolicyService.h"
+@@ -31,71 +32,34 @@ static sp<ISchedulingPolicyService> sSchedulingPolicyService;
+ static const String16 _scheduling_policy("scheduling_policy");
+ static Mutex sMutex;
+ 
+-int requestPriority(pid_t pid, pid_t tid, int32_t prio, bool isForApp, bool asynchronous)
++int requestPriority(pid_t pid, pid_t tid, int32_t prio, bool /*isForApp*/, bool /*asynchronous*/)
+ {
+-    // audioserver thread priority boosted internally to reduce binder latency and boot time.
+-    if (!isForApp && pid == getpid() && getuid() == AID_AUDIOSERVER && prio >= 1 && prio <= 3) {
+-        const status_t status = audio_utils::set_thread_priority(
+-                tid, audio_utils::rtprio_to_unified_priority(prio));
+-        if (status == NO_ERROR) return NO_ERROR;
+-        ALOGD("%s: set priority %d, status:%d needs to fallback to SchedulingPolicyService",
+-                __func__, prio, status);
++    // picodroid: no system_server — scheduling_policy never exists: boost threads locally
++    // (no binder), never sleep-loop on service lookup.
++    //
++    // 跨进程请求（audioserver 应 AAudio 客户端之请提升客户端回调线程）不可再走
++    // system_server 裁决；也【不可快速拒绝】——拒绝会让客户端 AAudio wrapUserThread
++    // 把注册失败当 DISCONNECTED（数据回调流整体失效，Oboe/NDK 规范程序跑不起来）。
++    // 语义改为 best-effort：能提就提（特权上下文下直接 sched 生效），提不动（EPERM
++    // 等）记警告后仍返回成功——优先级提升本就是性能优化而非正确性前提，picodroid
++    // 无权限裁决方时以"回调可达"为先。
++    if (prio < 1 || prio > 99) {
++        ALOGW("%s: invalid prio %d for pid %d tid %d", __func__, prio, pid, tid);
++        return BAD_VALUE;
+     }
+-
+-    // FIXME merge duplicated code related to service lookup, caching, and error recovery
+-    int ret;
+-    for (;;) {
+-        sMutex.lock();
+-        sp<ISchedulingPolicyService> sps = sSchedulingPolicyService;
+-        sMutex.unlock();
+-        if (sps == 0) {
+-            sp<IBinder> binder = defaultServiceManager()->checkService(_scheduling_policy);
+-            if (binder == 0) {
+-                sleep(1);
+-                continue;
+-            }
+-            sps = interface_cast<ISchedulingPolicyService>(binder);
+-            sMutex.lock();
+-            sSchedulingPolicyService = sps;
+-            sMutex.unlock();
+-        }
+-        ret = sps->requestPriority(pid, tid, prio, isForApp, asynchronous);
+-        if (ret != DEAD_OBJECT) {
+-            break;
+-        }
+-        ALOGW("SchedulingPolicyService died");
+-        sMutex.lock();
+-        sSchedulingPolicyService.clear();
+-        sMutex.unlock();
+-    }
+-    return ret;
++    const status_t status = audio_utils::set_thread_priority(
++            tid, audio_utils::rtprio_to_unified_priority(prio));
++    if (status == NO_ERROR) return NO_ERROR;
++    ALOGW("%s: set_thread_priority best-effort failed for pid %d tid %d prio %d, status %d"
++            " (continuing without boost)", __func__, pid, tid, prio, status);
++    return NO_ERROR;
+ }
+ 
+-int requestCpusetBoost(bool enable, const sp<IBinder> &client)
++int requestCpusetBoost(bool /*enable*/, const sp<IBinder> &/*client*/)
+ {
+-    int ret;
+-    sMutex.lock();
+-    sp<ISchedulingPolicyService> sps = sSchedulingPolicyService;
+-    sMutex.unlock();
+-    if (sps == 0) {
+-        sp<IBinder> binder = defaultServiceManager()->checkService(_scheduling_policy);
+-        if (binder == 0) {
+-            return DEAD_OBJECT;
+-        }
+-        sps = interface_cast<ISchedulingPolicyService>(binder);
+-        sMutex.lock();
+-        sSchedulingPolicyService = sps;
+-        sMutex.unlock();
+-    }
+-    ret = sps->requestCpusetBoost(enable, client);
+-    if (ret != DEAD_OBJECT) {
+-        return ret;
+-    }
+-    ALOGW("SchedulingPolicyService died");
+-    sMutex.lock();
+-    sSchedulingPolicyService.clear();
+-    sMutex.unlock();
+-    return ret;
++    // picodroid: no system_server — scheduling_policy never exists; no cpuset boost,
++    // fail fast with DEAD_OBJECT without any service lookup.
++    return DEAD_OBJECT;
+ }
+ 
+ int getSpatializerThreadPriority() {

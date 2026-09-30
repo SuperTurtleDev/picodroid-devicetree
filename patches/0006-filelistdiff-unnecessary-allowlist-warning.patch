@@ -1,0 +1,23 @@
+diff --git a/tools/filelistdiff/file_list_diff.py b/tools/filelistdiff/file_list_diff.py
+index 51d2e44..ae1c5a5 100644
+--- a/tools/filelistdiff/file_list_diff.py
++++ b/tools/filelistdiff/file_list_diff.py
+@@ -61,14 +61,12 @@ def find_unique_items(kati_installed_files, soong_installed_files, system_module
+             print('  '+item)
+ 
+     if unnecessary_allowlists:
++        # picodroid: 多架构共用同一全局 allowlist（arm64 的 hwasan 条目在 x86_64 构建中
++        # 必然"多余"）。降级为警告；真实双侧差异仍硬失败。
+         print('')
+-        print(f'{COLOR_ERROR}Unnecessary files in allowlist.{COLOR_NORMAL}')
+-        print('Please remove these entries from build/make/tools/filelistdiff/allowlist')
+-        for item in sorted(unnecessary_allowlists):
+-            print('  '+item)
+-
++        print(f'{COLOR_WARNING}Unnecessary files in allowlist (warning only).{COLOR_NORMAL}')
+ 
+-    if unique_in_kati or unique_in_soong or unnecessary_allowlists:
++    if unique_in_kati or unique_in_soong:
+         print('')
+         sys.exit(1)
+ 

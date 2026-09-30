@@ -1,0 +1,20 @@
+diff --git a/Android.bp b/Android.bp
+index 7c1d096..be5884d 100644
+--- a/Android.bp
++++ b/Android.bp
+@@ -258,6 +258,7 @@ build_prop {
+     visibility: [
+         "//build/make/target/product/gsi",
+         "//build/soong/fsgen",
++        "//device/anland/picodroid",
+     ],
+ }
+ 
+@@ -275,6 +276,7 @@ build_prop {
+         "//build/make/target/product/gsi",
+         "//build/soong/fsgen",
+         "//bootable/recovery/tests/ota",
++        "//device/anland/picodroid",
+     ],
+ }
+ 
