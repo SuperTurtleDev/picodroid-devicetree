@@ -387,3 +387,11 @@ libgui.so 的唯一引用 → libandroid_runtime（BnRegionSamplingListener 子�
 **补丁**：0015-libgui-composer-failfast.patch 重写（853 行，7 文件，native 5 + av 2；
 基线 frameworks/native=ae266dc、frameworks/av=475269e；双轨各仓本地提交
 4ade0e2 / d49d36c）。
+
+## CPU 优先级策略（2026-09-30 用户裁定：不动）
+
+top-app cgroup 层级由 init 从 task_profiles.json 正常创建（/dev/cpuctl/top-app 等齐全）；
+各服务按 task_profile 静态落组（audio/media→foreground，camera HAL→top-app）。
+**不引入**把 picodroid app 迁入 top-app 的机制（stock 中该迁移由 system_server 随前台
+切换执行，picodroid 无此场景）；app 进程落根组。如后续容器驱动需要差异化优先级再议
+（候选：launcher 写 cgroup.procs 或 depends 声明式 prio:: 语法）。
