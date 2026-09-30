@@ -4,4 +4,4 @@ export PATH=/system/bin:/vendor/bin
 export PD_OUT=/userdata/boot/tests/pd_sensor
 export PD_LOGDIR=/userdata/boot/logs
 mkdir -p "$PD_OUT" 2>/dev/null || true
-exec /system/bin/pdtest_sensor
+exec "$(dirname "$0")/bin/$(uname -m)/pdtest_sensor"

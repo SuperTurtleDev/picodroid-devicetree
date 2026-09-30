@@ -192,6 +192,11 @@ android_filesystem_defaults {
         "com.android.adbd",
         "init.picodroid.userdata.rc",
         "picodroid-userdata",
+        // M4 契约运行面：launcher 由 init.picodroid.userdata.rc 契约（data.ready →
+        // exec_start）拉起，并代办 boot_completed/VIRTUAL_DEVICE_BOOT_COMPLETED 标记。
+        // 测试二进制（pdtest_*）不进镜像（用户裁定 2026-09-30）：随 apps/ 契约
+        // bin/<arch>/ 携带，adb push 到机器（见 testsuite/tools_sync_test_bins.sh）。
+        "picodroid-launcher",
         "com.android.i18n",
         "com.android.tzdata",
         "com.android.resolv",
@@ -650,6 +655,10 @@ android_filesystem_defaults {
         // gsi_release
         ///////////////////////////////////////////
         "gsi_skip_mount.cfg",
+        // GSI 版本探测 rc 垫片：直接沿用官方模块（init.gsi.rc 原文 + init.vndk-nodef.rc）。
+        // nodef 的 reboot bootloader 由平台补丁 0016 改为 kmsg 告警（picodroid 跑 current-vendor）。
+        "init.gsi.rc",
+        "init.vndk-nodef.rc",
         // Overlay the GSI specific setting for framework and SystemUI
 
         ///////////////////////////////////////////

@@ -95,8 +95,10 @@ avbtool make_vbmeta_image \
   --output vbmeta_system2.img && truncate -s 65536 vbmeta_system2.img
 cvd create --host_path=/work/cvd --product_path=/work/cvd \
   --super_image=.../super.img --vbmeta_system_image=.../vbmeta_system2.img --daemon
-adb root && adb push <out>/pdtest_* /data/local/tmp/   # 测试二进制
-adb shell 'PD_OUT=/data/local/tmp /data/local/tmp/pdtest_<name>'
+cd testsuite && tools_sync_test_bins.sh <out-arch-dir> x86_64  # 测试二进制装入契约
+adb root && adb push apps/* /data/app/    # 契约（含 bin/<arch>/ 二进制，不进镜像）
+adb shell chmod -R 755 /data/app/*/bin /data/app/*/start.sh   # adb push 不带执行位
+adb shell /system/bin/picodroid-launcher  # 拓扑拉起；日志 /userdata/boot/logs/<id>.log
 ```
 
 运维坑（历次实证）：pkill 用 `-x` 精确进程名（`-f` 会杀掉自身）；被 timeout 杀过的

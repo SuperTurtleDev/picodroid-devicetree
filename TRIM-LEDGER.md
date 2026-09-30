@@ -32,11 +32,16 @@
 ## PM/framework元数据XML（29）
 `android.software.credentials.prebuilt.xml`, `android.software.preview_sdk.prebuilt.xml`, `android.software.webview.prebuilt.xml`, `android.software.window_magnification.prebuilt.xml`, `apns-full-conf.xml`, `app-lock-exempt.xml`, `approved-ogki-builds.xml`, `enhanced-confirmation.xml`, `framework-audio_effects.xml`, `framework-graphics`, `framework-location`, `framework-sysconfig.xml`, `initial-package-stopped-states.xml`, `kernel-lifetimes.xml`, `package-shareduid-allowlist.xml`, `platform.xml`, `preinstalled-packages-asl-files.xml`, `preinstalled-packages-base-product.xml`, `preinstalled-packages-gsi-system-ext.xml`, `preinstalled-packages-handheld-system-ext.xml`, `preinstalled-packages-media-product.xml`, `preinstalled-packages-media-system-ext.xml`, `preinstalled-packages-media-system.xml`, `preinstalled-packages-platform-generic-system.xml`, `preinstalled-packages-platform-handheld-system.xml`, `preinstalled-packages-platform-telephony-system.xml`, `preinstalled-packages-platform.xml`, `preinstalled-packages-strict-signature.xml`, `privapp-permissions-platform.xml`
 
-## GSI版本探测rc垫片（2）
+## GSI版本探测rc垫片（2）——保留：官方模块+平台补丁0016
 `init.gsi.rc`, `init.vndk-nodef.rc`
-（注：这是 GSI 的版本探测/兜底 rc，非 VNDK 快照；删除理由见"结构性调整"第 3 条——
-current vendor 上 nodef 分支必 reboot bootloader。VNDK 快照 v31–v34 已按用户裁定
-"必须全包含"恢复，见第 10 条。）
+（2026-09-30 用户裁定：不删、也不在设备树搓副本，直接沿用官方模块
+（gsi/Android.bp 定义，安装路径与官方一致：system_ext/etc/init/init.gsi.rc +
+system_ext/etc/gsi/init.vndk-nodef.rc）。唯一改动是平台补丁 0016
+（build/make 本地提交 8962f22）：nodef 的 `exec reboot bootloader` 补丁为
+/dev/kmsg 告警继续——官方 nodef 是对过老 vendor 的保护性拒绝，picodroid 设计
+运行 current-vendor（实测 ro.vndk.version 无探测逻辑、由 vendor build.prop
+声明、CF 不写），官方行为必 bootloop。补丁版垫片曾以设备树副本实现，因与
+stock 模块安装路径冲突（overriding commands）改为本方案。）
 
 ## AVF虚拟化(1)
 `com.android.compos`
@@ -59,9 +64,10 @@ current vendor 上 nodef 分支必 reboot bootloader。VNDK 快照 v31–v34 已
    - 决策记录（2026-09-29 用户拍板）：android17 下 apex 机制承重
      （adbd 仅存于 apex、mediaserver 链 i18n 的 libicu、TARGET_FLATTEN_APEX 已被上游移除），
      与 PLAN §3 "apexd 裁掉" 冲突，改为保留 apexd + 最小原生集。
-3. `init.gsi.rc` / `init.vndk-nodef.rc`（VNDK 版本垫片）删除：nodef 分支会 `reboot bootloader`，
-   picodroid 目标 vendor 为 current（ro.vndk.version 未设），保留必致 bootloop。属姿态级矛盾。
-4. VNDK v31–v34 apex 删除：PLAN §3 VNDK=current；CF vendor 同平台。真机阶段如需对齐再议。
+3. `init.gsi.rc` / `init.vndk-nodef.rc`（VNDK 版本垫片）：保留官方模块；平台补丁 0016 把
+   nodef 的 `reboot bootloader` 改为 kmsg 告警（picodroid 跑 current-vendor，ro.vndk.version
+   不设，官方行为必 bootloop）。双轨：build/make 本地提交 8962f22 + patches/0016-*.patch。
+4. VNDK v31–v34 apex：曾删；2026-09-30 用户裁定"必须全包含"恢复（对齐官方 GSI 通刷能力）。
 5. make 侧不继承 generic_system.mk / gsi_system_ext.mk / gsi_product.mk / updatable_apex.mk /
    core_64_bit(_only).mk（Java 产品链与 zygote/apex-shim 混入），改以 picodroid_common.mk
    镜像 soong deps；PRODUCT_PACKAGES 与 Android.bp deps 锁步，由 file_list_diff 校验闭环。
@@ -70,6 +76,14 @@ current vendor 上 nodef 分支必 reboot bootloader。VNDK 快照 v31–v34 已
    双轨：system/core 本地提交 + patches/0001-*.patch。
 7. Wi-Fi/BT：无 NDK 面（public.libraries.android.txt 已核实）；com.android.wifi/bt apex 为
    system_server 侧 Java 栈，删除不影响 vendor HAL 存活（M2 验证）。
+8. testsuite 二进制分发（2026-09-30 用户裁定）：pdtest_* 不进镜像产物，随 apps/ 契约
+   bin/<uname -m>/ 携带（tools_sync_test_bins.sh 从构建产物同步、固定映射清单），
+   adb push 到机器 /data/app/ 后由 launcher 拉起；start.sh 改 exec
+   `$(dirname $0)/bin/$(uname -m)/pdtest_*`。镜像仅新增 picodroid-launcher
+   （init rc 既契约 `service picodroid-launcher`，data.ready → exec_start，
+   并代办 boot_completed/VIRTUAL_DEVICE_BOOT_COMPLETED 标记）。此前 H 轮 11/11
+   的 pdtest_*/launcher 系 avbctl disable-verity + remount 运行时推入 /system/bin
+   （非持久），镜像本体从无——本轮一并纠正。
 
 ## M1 期间追加变更（2026-09-29，上机迭代实证）
 

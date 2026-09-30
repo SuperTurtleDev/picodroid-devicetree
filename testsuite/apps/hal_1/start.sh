@@ -9,4 +9,5 @@ mkdir -p "$PD_OUT" 2>/dev/null || true
 # dumpsys --pid 挂起、服务唯一线程卡 futex）。无 BPF 是 picodroid 既定形态，
 # 在此置位解锁：服务自行重启后进入 epoll 主循环正常对外服务。
 [ "$(getprop bpf.progs_loaded)" = "1" ] || setprop bpf.progs_loaded 1
-exec /data/local/tmp/pdtest_hal
+# 测试二进制随契约携带（bin/<uname -m>/），不进镜像（用户裁定 2026-09-30）
+exec "$(dirname "$0")/bin/$(uname -m)/pdtest_hal"

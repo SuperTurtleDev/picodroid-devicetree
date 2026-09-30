@@ -4,4 +4,4 @@ export PATH=/system/bin:/vendor/bin
 export PD_OUT=/userdata/boot/tests/pd_audio_ll
 export PD_LOGDIR=/userdata/boot/logs
 mkdir -p "$PD_OUT" 2>/dev/null || true
-exec /system/bin/pdtest_audio_ll
+exec "$(dirname "$0")/bin/$(uname -m)/pdtest_audio_ll"

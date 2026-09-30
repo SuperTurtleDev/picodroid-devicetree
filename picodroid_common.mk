@@ -36,9 +36,12 @@ PRODUCT_PRODUCT_PROPERTIES += \
     ro.crypto.metadata_init_delete_all_keys.enabled=false \
     debug.codec2.bqpool_dealloc_after_stop=1
 
-# GSI 分区姿态：skip_mount.cfg（沿用 GSI 原模块）+ HAL 存活配套（gsi_release 原文）
+# GSI 分区姿态：skip_mount.cfg + GSI 版本探测 rc 垫片（沿用 GSI 原模块；gsi_release 原文）
+# + HAL 存活配套
 PRODUCT_PACKAGES += \
     gsi_skip_mount.cfg \
+    init.gsi.rc \
+    init.vndk-nodef.rc \
     hwservicemanager \
     android.hidl.allocator@1.0-service \
     android.hidl.memory@1.0-impl
@@ -48,6 +51,7 @@ PRODUCT_PACKAGES += \
     mediametrics \
     init.picodroid.userdata.rc \
     picodroid-userdata \
+    picodroid-launcher \
     fstab.picodroid \
     com.android.tethering \
     com.android.vndk.v31 \

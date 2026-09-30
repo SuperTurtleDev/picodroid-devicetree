@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""picodroid 设备树生成器（最终版）。
+"""picodroid 设备树生成器（初始 bootstrap 用；已完成使命）。
+
+!! 警告：设备树自 bootstrap 后由人工维护，TRIM-LEDGER.md 为权威台账；
+!! 重新运行本脚本会用初始版本覆盖人工修改（如 VNDK v31-34 恢复、GSI rc
+!! 垫片保留官方模块+补丁0016 等）。仅供追溯初始生成逻辑，勿直接重跑。
 
 纪律（LESSONS.md + 本轮纠偏）：
 1. 四个 GSI 镜像 defaults 原文复制，只删台账条目（三类：Java/ART及配套、显示栈、VNDK垫片）
@@ -76,7 +80,8 @@ _cat('显示栈', [
     'libEGL','libEGL_angle','libGLESv1_CM','libGLESv1_CM_angle','libGLESv2','libGLESv2_angle',
     'libGLESv3','libinputflinger',
 ])
-_cat('VNDK版本垫片', ['init.gsi.rc','init.vndk-nodef.rc'])
+# 'VNDK版本垫片' 类目已撤销（2026-09-30）：init.gsi.rc/init.vndk-nodef.rc 保留官方模块，
+# nodef 行为由平台补丁 0016 改为告警。见 TRIM-LEDGER.md「GSI版本探测rc垫片」节。
 _cat('PM/framework元数据XML', [
     'app-lock-exempt.xml','approved-ogki-builds.xml','enhanced-confirmation.xml',
     'kernel-lifetimes.xml','initial-package-stopped-states.xml','package-shareduid-allowlist.xml',
@@ -92,8 +97,8 @@ _cat('PM/framework元数据XML', [
     'preinstalled-packages-base-product.xml','apns-full-conf.xml',
     'android.software.preview_sdk.prebuilt.xml',
 ])
-_cat('AVF虚拟化(GSI继承,picodroid无VM需求)', ['com.android.compos','com.android.vndk.v31',
-    'com.android.vndk.v32','com.android.vndk.v33','com.android.vndk.v34'])
+_cat('AVF虚拟化(GSI继承,picodroid无VM需求)', ['com.android.compos'])
+# VNDK v31-34 曾列此处，2026-09-30 用户裁定"必须全包含"恢复，不再是删除项。
 
 # 保留 apex（用户已拍板：apexd + 最小原生集；com.android.runtime=bionic支撑非ART）
 KEEP_APEX = ['com.android.adbd','com.android.i18n','com.android.tzdata','com.android.resolv',
@@ -511,9 +516,10 @@ led += ['## 结构性调整（非删除，逐项说明）', '''
    - 决策记录（2026-09-29 用户拍板）：android17 下 apex 机制承重
      （adbd 仅存于 apex、mediaserver 链 i18n 的 libicu、TARGET_FLATTEN_APEX 已被上游移除），
      与 PLAN §3 "apexd 裁掉" 冲突，改为保留 apexd + 最小原生集。
-3. `init.gsi.rc` / `init.vndk-nodef.rc`（VNDK 版本垫片）删除：nodef 分支会 `reboot bootloader`，
-   picodroid 目标 vendor 为 current（ro.vndk.version 未设），保留必致 bootloop。属姿态级矛盾。
-4. VNDK v31–v34 apex 删除：PLAN §3 VNDK=current；CF vendor 同平台。真机阶段如需对齐再议。
+3. `init.gsi.rc` / `init.vndk-nodef.rc`（VNDK 版本垫片）：保留官方模块；平台补丁 0016 把
+   nodef 的 `reboot bootloader` 改为 kmsg 告警（picodroid 跑 current-vendor）。
+   双轨：build/make 本地提交 + patches/0016-*.patch。
+4. VNDK v31–v34 apex：曾删；2026-09-30 用户裁定"必须全包含"恢复（对齐官方 GSI 通刷能力）。
 5. make 侧不继承 generic_system.mk / gsi_system_ext.mk / gsi_product.mk / updatable_apex.mk /
    core_64_bit(_only).mk（Java 产品链与 zygote/apex-shim 混入），改以 picodroid_common.mk
    镜像 soong deps；PRODUCT_PACKAGES 与 Android.bp deps 锁步，由 file_list_diff 校验闭环。

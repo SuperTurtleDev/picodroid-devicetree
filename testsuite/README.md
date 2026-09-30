@@ -15,9 +15,13 @@ NDK **功能级**测试（非存活检查）：相机真拍 JPEG、音频真录/
 | pdtest_all | 串行汇总 | 聚合 PASS/FAIL |
 
 ## 运行
-- M1 调试期：`adb shell pdtest_all`（产物落 `$PD_OUT`，默认契约路径，回退 /data/local/tmp）
-- M4 后：apps/ 下的 picodroid app（`<id>_1/start.sh` + `depends`）由 launcher 拓扑拉起，
-  日志按契约落 `/userdata/boot/logs/<id>.log`。
+- 测试二进制**不进镜像**（用户裁定 2026-09-30）：随 app 契约 `bin/<uname -m>/` 携带。
+  构建后同步进契约：`tools_sync_test_bins.sh <product-out-arch-dir> <x86_64|arm64>`
+  （固定映射清单即契约；arm64 落 `bin/aarch64/`，uname -m 口径）。
+- 上机：`adb push apps/* /data/app/`（契约含二进制，push 即自足），由 launcher 拓扑拉起，
+  日志按契约落 `/userdata/boot/logs/<id>.log`；手动补跑：`adb shell /system/bin/picodroid-launcher`。
+- M1 调试期直跑：`adb shell /data/app/pd_media_1/bin/$(uname -m)/pdtest_media`
+  （产物落 `$PD_OUT`，默认契约路径，回退 /data/local/tmp）。
 
 ## 边界说明
 - 蓝牙 NDK 无 API（public.libraries.android.txt 核实）；v1 为 HAL binder 功能连接，

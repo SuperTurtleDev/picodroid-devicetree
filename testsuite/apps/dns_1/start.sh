@@ -13,4 +13,5 @@ if ! ip addr show eth1 2>/dev/null | grep -q "inet "; then
     ip addr add 192.168.98.50/24 dev eth1 2>/dev/null
     ip route add default via 192.168.98.1 dev eth1 2>/dev/null
 fi
-exec /data/local/tmp/pdtest_dns
+# 测试二进制随契约携带（bin/<uname -m>/），不进镜像（用户裁定 2026-09-30）
+exec "$(dirname "$0")/bin/$(uname -m)/pdtest_dns"
