@@ -197,6 +197,16 @@ stock 模块安装路径冲突（overriding commands）改为本方案。）
 **app 形式测试结果（第一轮）**：pd_sensor=pd_bluetooth=pd_mount=PASS；pd_audio(-896 输入流)、pd_camera(0 相机)、pd_media(createCodecByName 挂起)进行中；hal/dns app 需按 depends 拉起 vendor HAL（已在树内修正）。
 **服务名勘误**：mediaserver 的 init 服务名是 media。
 
+**H 轮收敛根因（NDK 测试方法论，非平台缺陷）**：
+- 裸 NDK 进程不自动起 binder 线程池：AMediaCodec dequeue/回调、ACamera 会话回调
+  需要 `ABinderProcess_startThreadPool()`（pdtest_media/pdtest_encode/pdtest_camera 补齐后通）。
+- idlcli 仅实装 vibrator 一类 idl（其余子命令 stub）——HAL 面测试不能依赖 idlcli，
+  以 servicemanager 注册名 + 自写 binder 客户端为准（pdtest_hal 定稿形态）。
+- 相机 vendor 限制：CF 虚拟相机不支持 ZSL/模板全枚举，STILL_CAPTURE 模板 +
+  最小流配置才是可移植判据（测 Android 规范形态，不为平台 bug 改写测试）。
+- AMediaCodec configure 必须带 width/height + csd；ACameraDevice_createCaptureSession
+  回调结构体不可空；AMediaCodec_getInputBuffer 入队尺寸不得超过 cap 返回值。
+
 ## DSU 安全 userdata 挂载（2026-09-30，M3：行为变更，非删除）
 
 **问题**：原 `picodroid-mount-userdata.sh` 契约为"mount ext4 by-name/userdata 失败 →
