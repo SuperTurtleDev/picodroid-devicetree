@@ -1,0 +1,54 @@
+From 0e27d8ff41f795254542ab05bddcee3252ee0b28 Mon Sep 17 00:00:00 2001
+From: picodroid-builder <builder@picodroid.local>
+Date: Thu, 1 Oct 2026 02:33:05 +0000
+Subject: [PATCH] picodroid: dedicated picodroid_app domain for contract
+ services
+
+All picodroid contract services (userdata provision/hook/hook2, launcher,
+sensorservice) previously ran as u:r:su:s0, which only exists on
+userdebug/eng. New plat-private domain picodroid_app is permissive
+(denials logged, never enforced), exists in every build variant, and is
+distinguishable in ps -AZ. init->picodroid_app process transition allow
+mirrors the existing userdebug su pattern.
+
+Part of the SELinux boot contract (user decision 2026-09-30): deployment
+boots permissive via bootconfig androidboot.selinux=permissive; our rc
+then reloads the merged policy (picodroid-selinux) and re-enforces.
+
+Change-Id: I9fd3f6211da2e08596788e53a3813eb8bafae0e0
+---
+ private/picodroid_app.te | 22 ++++++++++++++++++++++
+ 1 file changed, 22 insertions(+)
+ create mode 100644 private/picodroid_app.te
+
+diff --git a/private/picodroid_app.te b/private/picodroid_app.te
+new file mode 100644
+index 0000000..8c7770c
+--- /dev/null
++++ b/private/picodroid_app.te
+@@ -0,0 +1,22 @@
++# picodroid 契约统一域（platform 补丁 0017）。
++# 进入方式：init.picodroid.userdata.rc 各 service 的 seclabel 直入（init setexeccon）；
++# start.sh → pdtest_* 无 transition 规则即继承本域。ps -AZ 可辨。
++# permissive：拒绝仅记 AVC 不生效——契约载荷可信，长尾操作留审计流；已知执行面
++# 显式 allow 以压噪音。不依赖 userdebug_or_eng（区别于 su 域，user 变体系统下依然存在）。
++# SELinux 启动契约（部署侧 bootconfig androidboot.selinux=permissive → rc 重载策略；
++# 不做全局 enforce，是否启用由 app 自行 setenforce 1）下：本域 permissive，
++# AVC 记录不生效。
++type picodroid_app, domain;
++
++permissive picodroid_app;
++
++# init 以 seclabel 拉起本域服务（同 private/init.te 的 allow init su:process transition 先例）
++allow init picodroid_app:process transition;
++dontaudit init picodroid_app:process noatsecure;
++allow init picodroid_app:process { siginh rlimitinh };
++
++# 契约执行面：只声明能过 treble neverallow 的最小集（shell_exec 带 exec_type）。
++# /system 工具与 app 目录二进制（apk_data_file=core_data_file_type，非 appdomain/
++# coredomain 域声明 execute/read 会撞 domain.te 的 treble neverallow）不声明——
++# permissive 域运行期放行并留 AVC 审计，这正是设计姿态。
++allow picodroid_app shell_exec:file { execute read open getattr map };
+-- 
+2.43.0
+

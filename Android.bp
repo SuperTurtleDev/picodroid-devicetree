@@ -194,9 +194,11 @@ android_filesystem_defaults {
         "picodroid-userdata",
         // M4 契约运行面：launcher 由 init.picodroid.userdata.rc 契约（data.ready →
         // exec_start）拉起，并代办 boot_completed/VIRTUAL_DEVICE_BOOT_COMPLETED 标记。
+        // picodroid-selinux：SELinux 启动契约 ②③（重载策略 + enforce 1）。
         // 测试二进制（pdtest_*）不进镜像（用户裁定 2026-09-30）：随 apps/ 契约
         // bin/<arch>/ 携带，adb push 到机器（见 testsuite/tools_sync_test_bins.sh）。
         "picodroid-launcher",
+        "picodroid-selinux",
         "com.android.i18n",
         "com.android.tzdata",
         "com.android.resolv",
@@ -734,4 +736,12 @@ sh_binary {
     name: "picodroid-launcher",
     src: "rootdir/picodroid-launcher.sh",
     filename: "picodroid-launcher",
+}
+
+// SELinux 启动契约 ②③：手动重载合并策略（复刻 init OpenPolicy 的 secilc 输入集）
+// + enforce 1；① 是部署侧 bootconfig 的 androidboot.selinux=permissive。
+sh_binary {
+    name: "picodroid-selinux",
+    src: "rootdir/picodroid-selinux.sh",
+    filename: "picodroid-selinux",
 }

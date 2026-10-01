@@ -463,3 +463,41 @@ VNDK apex v31–v34 全部激活。nodef 告警 kmsg 因本次启动早期日志
 vbmeta 旁路）、真机 HAL 集合的 VINTF 兼容、真机 sepolicy neverallow 与 su 域 launcher
 的相容性；另若未来出 picodroid **user 变体系统**，launcher 的 `seclabel u:r:su:s0`
 （userdebug_or_eng 包裹）将不存在，需换 init 域或建专用 picodroid_app 域。
+
+## SELinux 启动契约 + picodroid_app 域（2026-09-30 用户多轮裁定定稿）
+
+**设计**（真实平台 first-stage init 属设备 ramdisk，策略加载与 enforce 姿态不受
+system 控制——enforce 生命周期与域定义改为 picodroid 自己管）：
+1. **①部署前置**：bootconfig `androidboot.selinux=permissive`——设备 first-stage
+   init 加载合并策略后不 enforce，启动全程（vendor HAL、挂载契约、launcher）permissive。
+   CF 验证注入：`cvd create --extra_bootconfig_args="androidboot.selinux=permissive"`。
+2. **②rc 手动加载策略**：data.ready 末尾 `exec_start picodroid-selinux`（sh_binary）
+   复刻 system/core/init/selinux.cpp OpenPolicy() 的 secilc 输入集逐字重编译合并策略
+   （plat + mapping/<plat_sepolicy_vers.txt 首行>[.compat] + system_ext/product 各自
+   cil+mapping+compat + plat_pub_versioned + vendor + odm(可选) +
+   genfs_<genfs_labels_version.txt>.cil；`-c 30` 同 init 常量）。
+3. **不做 ③ enforce**（用户裁定）：是否启用 SELinux 由 app 决定（app 需要时自行
+   `setenforce 1`）。picodroid 全程 Permissive。
+4. **picodroid_app 域**（平台补丁 0017，plat-private）：全部契约服务
+   （userdata provision/hook/hook2、launcher、sensorservice、picodroid-selinux）
+   `seclabel u:r:picodroid_app:s0`；start.sh → pdtest_* 无 transition 即继承。
+   域 permissive（AVC 记录不生效=审计流）；不依赖 userdebug 的 su（user 变体系统
+   下依然存在，上一节的 caveat 就此消解）。声明 allow 仅 shell_exec（exec_type）——
+   system_file/apk_data_file 的 execute/read 声明会撞 domain.te 的 treble neverallow
+   （构建期即抓），permissive 域运行期放行即可，无需声明。
+
+**上机实证（CF user vendor + bootconfig permissive）**：boot 28s 处
+`picodroid-selinux: compiling (vers=202704 genfs=202704)` →
+`policy reloaded (enforce left to apps)`；getenforce=Permissive；
+`ps -AZ`：init 拉起（ctl.start/boot）的 pdtest_* = `u:r:picodroid_app:s0`；
+11/11 全 ok（picodroid_app 域下跑通）。
+
+**坑（实证序）**：
+1. init 域不允许 exec_no_trans 到无 transition 的二进制（permissive 下同样报错）——
+   rc 里策略加载必须走服务形态（seclabel + exec_start），不能裸 `exec --`。
+2. selinuxfs 的 load 要求**单次 write() 写完整策略**：shell 重定向/cat 分块写 EINVAL，
+   用 /system/bin/load_policy（init 的 security_load_policy 同语义）。
+3. 手动 `adb shell /system/bin/picodroid-launcher` 继承 shell 的 su 域——picodroid_app
+   域仅 init 经服务 seclabel 拉起时生效（验证域用 `setprop ctl.start picodroid-launcher`）。
+4. plat 策略 neverallow 在**构建期**即抓违规（GSI 运行时合并风险因此前移消解大半）；
+   剩余跨侧风险（类型撞名）靠上机验证兜底。

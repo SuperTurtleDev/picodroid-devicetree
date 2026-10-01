@@ -21,10 +21,19 @@
 # move+bind；late-fs（hook2）在宿主 vendor rc 的 mount_all --late（init.rc:10 先于
 # 本文件解析注册，同触发器先执行）之后清叠挂；post-fs-data 的全套 /data mkdir 落在
 # bind 之上（即 /userdata/boot 内），行为与 stock 一致。
-# 失败语义：exec_start 同步等待（apexd-bootstrap 同款模式）；服务以 su 域执行
-# （userdebug permissive，具备 mount 能力；M5 移除 SELinux 后不受影响）。任一
+# 失败语义：exec_start 同步等待（apexd-bootstrap 同款模式）；服务以 picodroid_app 域
+# 执行（平台补丁 0017 的 permissive 专属域，不依赖 userdebug 的 su）。任一
 # 子命令 FATAL exit 1 时 init 记错误日志（android17 中 action 后续命令不因此中断，
 # 终态收敛一致：挂载链断 → /data 拓扑不成立 → data.ready 不置位 → launcher 不运行）。
+#
+# SELinux 启动契约（用户裁定 2026-09-30）：真实平台上 first-stage init 属设备 ramdisk、
+# 策略加载与 enforce 姿态不受 system 控制——契约改为：
+#   ① 部署前置：bootconfig 带 androidboot.selinux=permissive——设备 first-stage init
+#      加载策略后不 enforce，启动全程（vendor HAL 拉起、挂载契约、launcher）permissive；
+#   ② data.ready 末尾 picodroid-selinux 手动重载合并策略（复刻 init 的 secilc 输入集）。
+#   不做全局 enforce——是否启用 SELinux 由 app 决定（需要时 app 自行 setenforce 1；
+#   picodroid_app 域本身 permissive，AVC 记录不生效）。未带 permissive bootconfig 的
+#   部署：① 缺席时全程 Enforcing，② 仍执行。
 
 # 无 vold：抢先固化加密属性（ro. 先到先得），阻止 fs_mgr 按 fstab 的 fileencryption
 # 标志置 file/encrypted —— IsFbeEnabled() 为假后，init 的 mkdir encryption= 策略分支
@@ -52,31 +61,31 @@ on late-fs
 service picodroid-userdata-provision /system/bin/sh /system/bin/picodroid-userdata provision
     user root
     group root
-    seclabel u:r:su:s0
+    seclabel u:r:picodroid_app:s0
     disabled
     oneshot
 
 service picodroid-userdata-hook /system/bin/sh /system/bin/picodroid-userdata hook
     user root
     group root
-    seclabel u:r:su:s0
+    seclabel u:r:picodroid_app:s0
     disabled
     oneshot
 
 service picodroid-userdata-hook2 /system/bin/sh /system/bin/picodroid-userdata hook2
     user root
     group root
-    seclabel u:r:su:s0
+    seclabel u:r:picodroid_app:s0
     disabled
     oneshot
 
 # android17 将 sensorservice 宿主移入 system_server（上游无独立 rc）；picodroid 以独立
-# 进程拉起（M5 期以 su 域运行——permissive，可注册 sensorservice 服务并访问 sensor HAL；
-# 专属 sepolicy 域后续补）。其 system_server 依赖已由补丁 0009 拆除。
+# 进程拉起。其 system_server 依赖已由补丁 0009 拆除。
 service sensorservice /system/bin/sensorservice
     user root
     group root readproc
-    seclabel u:r:su:s0
+    # sensorservice 注册服务/访问 sensor HAL 需宽松域：launcher 的 service:: 依赖按需拉起
+    seclabel u:r:picodroid_app:s0
     class main
     # 最小启动：disabled —— 不自动起（class main 本已被 0013 门控，此处双保险），
     # 由 launcher 的 service::sensorservice 依赖按需 ctl.start 拉起。
@@ -97,7 +106,20 @@ on boot
 service picodroid-launcher /system/bin/sh /system/bin/picodroid-launcher
     user root
     group root
-    seclabel u:r:su:s0
+    # 专属域（平台补丁 0017）：permissive 域、不依赖 userdebug 的 su、ps -AZ 可辨。
+    # start.sh → pdtest_* 无 transition 即继承本域。
+    seclabel u:r:picodroid_app:s0
+    disabled
+    oneshot
+
+# SELinux 启动契约 ②：手动重载合并策略（① 是部署侧 bootconfig 的
+# androidboot.selinux=permissive）。不 enforce——是否启用 SELinux 由 app 决定。
+# 服务形态（seclabel 过渡）而非裸 exec：init 域不允许 exec_no_trans 到无
+# transition 的二进制（permissive 下同样报错）。
+service picodroid-selinux /system/bin/picodroid-selinux
+    user root
+    group root
+    seclabel u:r:picodroid_app:s0
     disabled
     oneshot
 
@@ -112,6 +134,9 @@ on property:picodroid.data.ready=1
     setprop sys.boot_completed 1
     write /dev/kmsg "VIRTUAL_DEVICE_BOOT_COMPLETED"
     write /dev/kmsg "GUEST_BUILD_FINGERPRINT: ${ro.build.fingerprint}"
+    # SELinux 启动契约 ②：手动重载合并策略（① 是部署侧 bootconfig 的
+    # androidboot.selinux=permissive）。不 enforce——是否启用 SELinux 由 app 决定。
+    exec_start picodroid-selinux
 
 # ===== 最小启动白名单（开机仅 adbd 及其硬依赖；链路逐项核实 2026-09-29，android17）=====
 # 以下均不依赖 class_start，0013 门控不影响：
