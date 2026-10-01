@@ -200,6 +200,7 @@ android_filesystem_defaults {
         "picodroid-launcher",
         "picodroid-selinux",
         "picodroid-kmsglog",
+        "picodroid-usb",
         "com.android.i18n",
         "com.android.tzdata",
         "com.android.resolv",
@@ -752,4 +753,11 @@ sh_binary {
     name: "picodroid-kmsglog",
     src: "rootdir/picodroid-kmsglog.sh",
     filename: "picodroid-kmsglog",
+}
+
+// 真机 USB adb：configfs gadget + f_adb 绑 UDC（adbd 原生支持）。
+sh_binary {
+    name: "picodroid-usb",
+    src: "rootdir/picodroid-usb.sh",
+    filename: "picodroid-usb",
 }

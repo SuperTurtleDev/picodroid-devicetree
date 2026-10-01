@@ -60,6 +60,7 @@ PRODUCT_PACKAGES += \
     picodroid-launcher \
     picodroid-selinux \
     picodroid-kmsglog \
+    picodroid-usb \
     fstab.picodroid \
     com.android.tethering \
     com.android.vndk.v31 \

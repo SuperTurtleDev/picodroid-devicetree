@@ -86,6 +86,34 @@ DSU=0
 # /proc/mounts 顶层（最后一条）指定挂载点的源设备
 top_src() { awk -v m="$1" '$2==m{s=$1} END{print s}' /proc/mounts; }
 
+# DSU 数据源栈解析（真机实证修订 2026-10-01）：OPPO 真机在 gsid 的 userdata_gsi
+# 之外再包 OEM dm 层（实测栈顶 dm-17），/proc/mounts 显示内核名而非 userdata_gsi
+# 符号名——旧"basename==userdata_gsi"判据在真机误杀（FATAL 后契约全断）。
+# 改为语义判定：从源设备的 /sys/block/<dev> 沿 slaves 展开整栈，收集设备名与
+# dm 名（/sys/block/<dev>/dm/name）：栈含 dm 名 userdata_gsi → gsid 虚拟设备
+# （无论外面包几层）；栈含 by-name/userdata 实设备 → 宿主分区（拒绝）。
+stack_walk() {  # $1=/sys/block/<dev>；输出栈内设备名与 dm 名
+    local d="$1" s n
+    [ -d "$d" ] || return 0
+    echo "$(basename "$d")"
+    n=$(cat "$d/dm/name" 2>/dev/null)
+    [ -n "$n" ] && echo "name:$n"
+    for s in "$d"/slaves/*; do
+        [ -e "$s" ] || continue
+        stack_walk "/sys/block/$(basename "$s")"
+    done
+}
+# 源设备（/proc/mounts 形态：/dev/block/dm-N 或 mapper 名）→ /sys/block 目录
+src_sysdir() {
+    local b l
+    b=$(basename "$1")
+    case "$b" in
+        dm-*) echo "/sys/block/$b" ;;
+        *) l=$(readlink -f "/dev/block/mapper/$b" 2>/dev/null)
+           [ -n "$l" ] && echo "/sys/block/$(basename "$l")" ;;
+    esac
+}
+
 CMD=${1:-}
 case "$CMD" in
 
@@ -135,12 +163,23 @@ hook)
     # 本机 init 环境下 MS_MOVE 不可用，bind+umount 是等价且已实证的做法）。
     mount -o bind /data /userdata \
         || { dbg "FATAL: hook: bind /data /userdata failed"; exit 1; }
-    # DSU 守卫（用户既定）：DSU 态数据源必须是 gsid 虚拟设备 userdata_gsi，
-    # 否则挂的是宿主分区——拒绝（/proc/mounts 对 bind 显示底层设备名，此处可靠）。
+    # DSU 守卫（用户既定 + 真机实证修订 2026-10-01）：DSU 态数据源栈必须含 gsid
+    # 虚拟设备 userdata_gsi（真机外层另有 OEM dm 包裹，栈顶名非 userdata_gsi），
+    # 且不得含真机 by-name/userdata 实设备（宿主分区保护）。
     if [ "$DSU" = "1" ]; then
-        BASE=$(basename "$(top_src /userdata)")
-        [ "$BASE" = "userdata_gsi" ] \
-            || { dbg "FATAL: hook: DSU guest but source is $BASE, not userdata_gsi (host partition); refusing"; exit 1; }
+        SRC=$(top_src /userdata)
+        STACK=$(stack_walk "$(src_sysdir "$SRC")")
+        dbg "hook: DSU source stack: $(echo "$STACK" | tr '\n' ' ')"
+        REAL=$(basename "$(readlink -f "$BYNAME/userdata")")
+        if echo "$STACK" | grep -q "^name:userdata_gsi$"; then
+            : # gsid 虚拟设备链（可含 OEM dm 包裹）——放行
+        elif echo "$STACK" | grep -qx "$REAL"; then
+            dbg "FATAL: hook: DSU guest but source stack hits host partition $REAL; refusing"
+            exit 1
+        else
+            dbg "FATAL: hook: DSU guest but no userdata_gsi in source stack ($SRC); refusing"
+            exit 1
+        fi
     fi
     umount /data \
         || { dbg "FATAL: hook: umount /data failed"; exit 1; }

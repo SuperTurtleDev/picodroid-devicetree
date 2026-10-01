@@ -51,6 +51,8 @@ on early-init
     # （/dev/kmsg 全量回放+跟随 → /metadata/picodroid-dmesg.log）——挂载契约
     # 若在早期失败，本服务已把 init 全量轨迹持久化到真机 metadata 分区。
     start picodroid-kmsglog
+    # USB adb 早在 early-init 拉（不依赖 /data）：adbd 的 USB 通道尽快就位
+    start picodroid-usb
 
 # 挂载主体：default 模式单次挂载（无 --early/--late，fstab 条目亦无 latemount）。
 on early-fs
@@ -67,6 +69,16 @@ service picodroid-kmsglog /system/bin/sh /system/bin/picodroid-kmsglog
     group root
     seclabel u:r:picodroid_app:s0
     disabled
+
+# 真机 USB adb（2026-10-01 实证缺位）：configfs gadget + f_adb，绑 UDC。
+# adbd 本体由 apexd.status=activated 拉起（下方既有契约）；USB 功能面由此补齐。
+# 幂等；无 UDC/configfs 时仅记 kmsg 退出（不影响启动）。
+service picodroid-usb /system/bin/sh /system/bin/picodroid-usb
+    user root
+    group root
+    seclabel u:r:picodroid_app:s0
+    disabled
+    oneshot
 
 # 三个同步服务：同脚本同 seclabel，仅子命令不同（provision/hook/hook2）；
 # exec_start 同步等待服务退出的模式保持不变（apexd-bootstrap 同款）。

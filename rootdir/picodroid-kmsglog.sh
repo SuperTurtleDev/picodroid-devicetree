@@ -20,4 +20,6 @@ if [ "$SZ" -gt 8388608 ]; then
 fi
 
 echo "==== picodroid-kmsglog start $(date '+%m-%d %H:%M:%S') uname=$(uname -r) ====" >> "$LOG"
+# 周期 sync：/metadata 为 f2fs，强制断电会回滚到上个检查点——实测丢过整轮日志
+( while true; do sleep 2; sync; done ) &
 cat /dev/kmsg >> "$LOG" 2>/dev/null
