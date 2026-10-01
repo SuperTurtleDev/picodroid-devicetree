@@ -47,6 +47,37 @@ LOG="picodroid-mount"
 
 log() { echo "$LOG: $*" >> /dev/kmsg 2>/dev/null || echo "$LOG: $*"; }
 
+# 真机 DSU debug（2026-10-01 用户裁定）：kmsg 之外同步落 /metadata/picodroid-debug.log。
+# DSU guest 中 /metadata 为真机 metadata 分区（gsid-bootstrap 已挂 rw，DSU 状态所在）；
+# 回原厂系统后 su 可读——无 adb 场景下唯一持久的 picodroid 侧启动证据。
+# /metadata 不可写（未挂/ro）时静默退化为纯 kmsg。
+DBGLOG=/metadata/picodroid-debug.log
+dbg() {
+    log "$*"
+    echo "$(date '+%m-%d %H:%M:%S') [$$] $*" >> "$DBGLOG" 2>/dev/null
+}
+# 快照：回答"DSU 状态下真机 userdata 挂在哪"——挂载面/dm 面/by-name/DSU 状态/关键 props
+snapshot() {
+    {
+        echo "==== snapshot: $1 (uname=$(uname -r)) ===="
+        echo "-- mounts(data/userdata/mapper/gsi/metadata) --"
+        grep -E ' /data | /userdata |mapper|gsi|metadata' /proc/mounts
+        echo "-- by-name/userdata --"
+        ls -la "$BYNAME/userdata" 2>&1
+        echo "-- /dev/block/mapper --"
+        ls "$MAPPER" 2>&1
+        echo "-- props --"
+        getprop ro.gsid.image_running
+        getprop ro.boot.slot_suffix
+        getprop ro.crypto.state
+        getprop picodroid.data.ready
+        getprop sys.boot_completed
+        echo "-- dsu dir --"
+        ls -la "$DSU_DIR" 2>&1 | head -8
+        echo "==== end snapshot ===="
+    } >> "$DBGLOG" 2>/dev/null
+}
+
 # DSU 判定（provision/hook 共用）：ro.gsid.image_running=1 或 booted 指示文件存在。
 DSU=0
 [ "$(getprop ro.gsid.image_running 2>/dev/null)" = "1" ] && DSU=1
@@ -61,9 +92,11 @@ case "$CMD" in
 provision)
     # DSU 态零接触：gsid 已清零 userdata_gsi 首 4K，交给标准 formattable 链。
     if [ "$DSU" = "1" ]; then
-        log "provision: DSU guest; zero-touch (gsid zeroed userdata_gsi at install)"
+        dbg "provision: DSU guest; zero-touch (gsid zeroed userdata_gsi at install)"
+        snapshot "provision-entry-DSU"
         exit 0
     fi
+    snapshot "provision-entry"
     # 设备按 fstab 同源解析（仅探测不改挂载语义）：mapper/userdata 优先，
     # by-name/userdata 兜底（CF 为物理分区，仅 by-name 存在）。
     DEV=""
@@ -71,21 +104,21 @@ provision)
         [ -b "$d" ] && { DEV="$d"; break; }
     done
     if [ -z "$DEV" ]; then
-        log "FATAL: provision: no userdata device ($MAPPER/userdata, $BYNAME/userdata)"
+        dbg "FATAL: provision: no userdata device ($MAPPER/userdata, $BYNAME/userdata)"
         exit 1
     fi
     # 合法 ext4（偏移 1080 魔数 0xEF53，小端字节序 53 ef）→ 永不触碰。
     MAGIC=$(dd if="$DEV" bs=1 skip=1080 count=2 2>/dev/null | od -An -tx1 | tr -d ' \n')
     if [ "$MAGIC" = "53ef" ]; then
-        log "provision: $DEV is valid ext4; data preserved"
+        dbg "provision: $DEV is valid ext4; data preserved"
         exit 0
     fi
     # 非 ext4：AUDIT + 清零首 4096 字节 + sync → 标准 wiped→formattable→
     # fs_mgr_do_format（mke2fs+e2fsdroid）接管；脚本自身无任何 mke2fs。
     SIZE=$(blockdev --getsize64 "$DEV" 2>/dev/null || echo unknown)
-    log "AUDIT: provision wipe device=$DEV size=$SIZE (not ext4; zero first 4096 bytes only, standard formattable flow will mkfs; data loss by contract)"
+    dbg "AUDIT: provision wipe device=$DEV size=$SIZE (not ext4; zero first 4096 bytes only, standard formattable flow will mkfs; data loss by contract)"
     dd if=/dev/zero of="$DEV" bs=4096 count=1 conv=notrunc 2>/dev/null \
-        || { log "FATAL: provision: zeroing $DEV failed"; exit 1; }
+        || { dbg "FATAL: provision: zeroing $DEV failed"; exit 1; }
     sync
     exit 0
     ;;
@@ -97,26 +130,27 @@ hook)
         sleep 1
         i=$((i + 1))
     done
-    [ -n "$(top_src /data)" ] || { log "FATAL: hook: /data not mounted within 10s"; exit 1; }
+    [ -n "$(top_src /data)" ] || { dbg "FATAL: hook: /data not mounted within 10s"; exit 1; }
     # move /data → /userdata：bind 到新挂载点后卸掉原挂载点（语义等价 mount --move；
     # 本机 init 环境下 MS_MOVE 不可用，bind+umount 是等价且已实证的做法）。
     mount -o bind /data /userdata \
-        || { log "FATAL: hook: bind /data /userdata failed"; exit 1; }
+        || { dbg "FATAL: hook: bind /data /userdata failed"; exit 1; }
     # DSU 守卫（用户既定）：DSU 态数据源必须是 gsid 虚拟设备 userdata_gsi，
     # 否则挂的是宿主分区——拒绝（/proc/mounts 对 bind 显示底层设备名，此处可靠）。
     if [ "$DSU" = "1" ]; then
         BASE=$(basename "$(top_src /userdata)")
         [ "$BASE" = "userdata_gsi" ] \
-            || { log "FATAL: hook: DSU guest but source is $BASE, not userdata_gsi (host partition); refusing"; exit 1; }
+            || { dbg "FATAL: hook: DSU guest but source is $BASE, not userdata_gsi (host partition); refusing"; exit 1; }
     fi
     umount /data \
-        || { log "FATAL: hook: umount /data failed"; exit 1; }
+        || { dbg "FATAL: hook: umount /data failed"; exit 1; }
     # picodroid 数据区 = 分区内 boot 子目录（幂等重建目录，不动其余数据）。
     mkdir -p /userdata/boot \
-        || { log "FATAL: hook: mkdir /userdata/boot failed"; exit 1; }
+        || { dbg "FATAL: hook: mkdir /userdata/boot failed"; exit 1; }
     mount -o bind /userdata/boot /data \
-        || { log "FATAL: hook: bind /userdata/boot /data failed"; exit 1; }
-    log "hook: done (data->userdata, boot->data)"
+        || { dbg "FATAL: hook: bind /userdata/boot /data failed"; exit 1; }
+    dbg "hook: done (data->userdata, boot->data)"
+    snapshot "post-mount_all-hook"
     exit 0
     ;;
 
@@ -129,14 +163,15 @@ hook2)
         i=$((i + 1))
     done
     mount -o bind /userdata/boot /data \
-        || { log "FATAL: hook2: bind /userdata/boot /data failed"; exit 1; }
+        || { dbg "FATAL: hook2: bind /userdata/boot /data failed"; exit 1; }
     setprop picodroid.data.ready 1
-    log "hook2: ready"
+    dbg "hook2: ready"
+    snapshot "data-ready"
     exit 0
     ;;
 
 *)
-    log "FATAL: unknown command '${CMD}' (usage: picodroid-userdata provision|hook|hook2)"
+    dbg "FATAL: unknown command '${CMD}' (usage: picodroid-userdata provision|hook|hook2)"
     exit 1
     ;;
 esac

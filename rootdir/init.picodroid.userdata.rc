@@ -47,6 +47,10 @@ on early-init
     setprop picodroid.boot.profile minimal
     setprop ro.crypto.type none
     setprop ro.crypto.state unsupported
+    # 真机 DSU debug（2026-10-01 用户裁定）：最早启动 dmesg 同步落盘服务
+    # （/dev/kmsg 全量回放+跟随 → /metadata/picodroid-dmesg.log）——挂载契约
+    # 若在早期失败，本服务已把 init 全量轨迹持久化到真机 metadata 分区。
+    start picodroid-kmsglog
 
 # 挂载主体：default 模式单次挂载（无 --early/--late，fstab 条目亦无 latemount）。
 on early-fs
@@ -55,6 +59,14 @@ on early-fs
     exec_start picodroid-userdata-hook
 on late-fs
     exec_start picodroid-userdata-hook2
+
+# dmesg 持久化（真机 debug）：cat /dev/kmsg（打开即全量回放缓冲，随后跟随新消息）
+# 追加到 /metadata/picodroid-dmesg.log；/metadata 不可写时静默退出。常驻非 oneshot。
+service picodroid-kmsglog /system/bin/sh /system/bin/picodroid-kmsglog
+    user root
+    group root
+    seclabel u:r:picodroid_app:s0
+    disabled
 
 # 三个同步服务：同脚本同 seclabel，仅子命令不同（provision/hook/hook2）；
 # exec_start 同步等待服务退出的模式保持不变（apexd-bootstrap 同款）。
