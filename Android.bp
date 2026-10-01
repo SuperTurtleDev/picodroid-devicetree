@@ -199,7 +199,6 @@ android_filesystem_defaults {
         // bin/<arch>/ 携带，adb push 到机器（见 testsuite/tools_sync_test_bins.sh）。
         "picodroid-launcher",
         "picodroid-selinux",
-        "picodroid-kmsglog",
         "picodroid-usb",
         "com.android.i18n",
         "com.android.tzdata",
@@ -746,13 +745,6 @@ sh_binary {
     name: "picodroid-selinux",
     src: "rootdir/picodroid-selinux.sh",
     filename: "picodroid-selinux",
-}
-
-// 真机 DSU debug：early-init 起将 dmesg(/dev/kmsg) 同步落盘到 /metadata。
-sh_binary {
-    name: "picodroid-kmsglog",
-    src: "rootdir/picodroid-kmsglog.sh",
-    filename: "picodroid-kmsglog",
 }
 
 // 真机 USB adb：configfs gadget + f_adb 绑 UDC（adbd 原生支持）。

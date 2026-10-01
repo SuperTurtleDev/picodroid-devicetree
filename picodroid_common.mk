@@ -59,7 +59,6 @@ PRODUCT_PACKAGES += \
     picodroid-userdata \
     picodroid-launcher \
     picodroid-selinux \
-    picodroid-kmsglog \
     picodroid-usb \
     fstab.picodroid \
     com.android.tethering \
