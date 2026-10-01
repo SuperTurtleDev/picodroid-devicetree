@@ -47,6 +47,9 @@ on early-init
     setprop picodroid.boot.profile minimal
     setprop ro.crypto.type none
     setprop ro.crypto.state unsupported
+    # 无头无授权 UI（真机实证 2026-10-01：USB adb 卡 unauthorized）：
+    # 关闭 adb RSA 认证（ro. 先到先得，adbd 启动远晚于此）——debug GSI 形态。
+    setprop ro.adb.secure 0
     # 真机 DSU debug（2026-10-01 用户裁定）：最早启动 dmesg 同步落盘服务
     # （/dev/kmsg 全量回放+跟随 → /metadata/picodroid-dmesg.log）——挂载契约
     # 若在早期失败，本服务已把 init 全量轨迹持久化到真机 metadata 分区。
